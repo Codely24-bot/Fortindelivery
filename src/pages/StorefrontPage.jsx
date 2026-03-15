@@ -357,10 +357,6 @@ function StorefrontPage() {
                 <ShoppingCart size={16} />
                 Fazer pedido rapido
               </button>
-              <a href={whatsAppLink} target="_blank" rel="noreferrer" className="button button-soft">
-                <MessageCircle size={16} />
-                Falar no WhatsApp
-              </a>
             </div>
 
             <div className="hero-points">
