@@ -1,6 +1,8 @@
 import { Minus, Plus, ShoppingBag } from "lucide-react";
 
 function ProductCard({ product, quantity, onAdd, onIncrease, onDecrease }) {
+  const displayPrice = Number(product?.price ?? 0);
+  const comparePrice = Number(product?.originalPrice ?? displayPrice);
   return (
     <article className="product-card">
       <div className="product-art">
@@ -19,9 +21,9 @@ function ProductCard({ product, quantity, onAdd, onIncrease, onDecrease }) {
 
         <div className="product-footer">
           <div>
-            <strong>R$ {product.price.toFixed(2).replace(".", ",")}</strong>
-            {product.originalPrice > product.price ? (
-              <span>R$ {product.originalPrice.toFixed(2).replace(".", ",")}</span>
+            <strong>R$ {displayPrice.toFixed(2).replace(".", ",")}</strong>
+            {comparePrice > displayPrice ? (
+              <span>R$ {comparePrice.toFixed(2).replace(".", ",")}</span>
             ) : null}
           </div>
 

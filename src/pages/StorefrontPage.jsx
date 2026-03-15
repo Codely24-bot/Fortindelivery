@@ -40,7 +40,30 @@ const safeParse = (value, fallback) => {
 };
 
 const formatCurrency = (value) => `R$ ${Number(value || 0).toFixed(2).replace(".", ",")}`;
+const normalizeProduct = (product) => {
+  const salePrice = Number(product?.salePrice ?? product?.price ?? 0);
+  const originalPrice = Number(
+    product?.originalPrice ?? product?.price ?? product?.salePrice ?? salePrice
+  );
 
+  return {
+    ...product,
+    price: salePrice,
+    originalPrice
+  };
+};
+
+const normalizeStore = (payload) => {
+  if (!payload) {
+    return payload;
+  }
+
+  return {
+    ...payload,
+    products: (payload.products || []).map(normalizeProduct),
+    featuredProducts: (payload.featuredProducts || []).map(normalizeProduct)
+  };
+};
 const getWhatsAppLink = (settings) => {
   const phone = settings?.whatsappNumber || "";
   const message = settings?.quickMessage || "Quero fazer um pedido";
@@ -107,7 +130,7 @@ function StorefrontPage() {
     const loadStore = async () => {
       try {
         const payload = await api.getStore();
-        setStore(payload);
+        setStore(normalizeStore(payload));
       } catch (error) {
         setFeedback(error.message);
       } finally {
@@ -119,7 +142,7 @@ function StorefrontPage() {
 
     const handleCatalogUpdate = (payload) => {
       if (payload?.products) {
-        setStore(payload);
+        setStore(normalizeStore(payload));
       } else {
         loadStore();
       }
