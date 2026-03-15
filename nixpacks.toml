@@ -11,7 +11,7 @@ nixPkgs = [
   "expat",
   "fontconfig",
   "freetype",
-  "gbm",
+  "libgbm",
   "gtk3",
   "libdrm",
   "mesa",
