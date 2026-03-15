@@ -51,15 +51,24 @@ npm run dev
 
 1. Builder: use Nixpacks (o projeto inclui `nixpacks.toml`).
 2. Start command: `npm start` (ou deixe detectar).
-3. Volume: monte em `/data`.
-4. Variaveis sugeridas:
-   - `PUBLIC_STORE_URL=https://SEU_DOMINIO_RAILWAY`
+3. Gere um dominio publico para o servico.
+4. Volume: monte em `/data`.
+5. Mantenha apenas `1` replica do servico para nao corromper `db.json` nem a sessao do WhatsApp.
+6. Variaveis sugeridas:
    - `ADMIN_USER`, `ADMIN_PASSWORD`, `ADMIN_TOKEN`
    - `WHATSAPP_ENABLED=true`
    - `WHATSAPP_HEADLESS=true`
    - `DATA_DIR=/data`
    - `WHATSAPP_AUTH_DIR=/data/.wwebjs_auth`
    - `WHATSAPP_CACHE_DIR=/data/.wwebjs_cache`
+7. O sistema ja entende automaticamente:
+   - `PORT` do Railway
+   - `RAILWAY_PUBLIC_DOMAIN` como URL publica, se `PUBLIC_STORE_URL` nao estiver definida
+   - `RAILWAY_VOLUME_MOUNT_PATH` como pasta de dados, se `DATA_DIR` nao estiver definida
+8. Depois do deploy:
+   - abra `/api/whatsapp/qr`
+   - escaneie o QR
+   - teste `/api/health`, a loja `/` e o painel `/admin`
 
 ## Fluxo do WhatsApp
 

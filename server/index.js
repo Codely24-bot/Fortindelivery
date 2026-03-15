@@ -25,6 +25,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
 const distDir = path.join(rootDir, "dist");
 const port = Number(process.env.PORT || 4000);
+const host = process.env.HOST || "0.0.0.0";
 
 const ADMIN_USER = process.env.ADMIN_USER || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "123456";
@@ -1338,8 +1339,8 @@ if (fs.existsSync(distDir)) {
 
 initializeWhatsAppBot();
 
-server.listen(port, () => {
-  console.log(`Delivery server running on http://localhost:${port}`);
+server.listen(port, host, () => {
+  console.log(`Delivery server running on http://${host}:${port}`);
   console.log(`Admin padrao: ${ADMIN_USER} / ${ADMIN_PASSWORD}`);
   console.log(`Status disponiveis: ${STATUS_FLOW.map((status) => STATUS_LABELS[status]).join(", ")}`);
   console.log(`Loja publica: ${getPublicStoreUrl()}`);

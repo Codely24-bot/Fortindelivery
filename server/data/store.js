@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { initialData } from "./seed.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const defaultDataDir = __dirname;
+const defaultDataDir = process.env.RAILWAY_VOLUME_MOUNT_PATH || __dirname;
 const dataDir = process.env.DATA_DIR || process.env.APP_DATA_DIR || defaultDataDir;
 const resolvedDataDir = path.resolve(dataDir);
 
