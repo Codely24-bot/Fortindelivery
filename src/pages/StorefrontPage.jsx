@@ -3,7 +3,6 @@ import { Link, useNavigate } from "react-router-dom";
 import {
   ArrowRight,
   Clock3,
-  LayoutDashboard,
   MessageCircle,
   RotateCcw,
   ShieldCheck,
@@ -342,16 +341,6 @@ function StorefrontPage() {
             </div>
           </Link>
 
-          <div className="topbar-actions">
-            <a href={whatsAppLink} target="_blank" rel="noreferrer" className="button button-muted">
-              <MessageCircle size={16} />
-              WhatsApp
-            </a>
-            <Link to="/admin" className="button button-outline">
-              <LayoutDashboard size={16} />
-              Painel
-            </Link>
-          </div>
         </div>
 
         <div className="hero-grid">
@@ -514,11 +503,6 @@ function StorefrontPage() {
       </main>
 
       {feedback ? <div className="toast-message">{feedback}</div> : null}
-
-      <button type="button" className="floating-whatsapp" onClick={() => window.open(whatsAppLink, "_blank")}>
-        <MessageCircle size={18} />
-        WhatsApp
-      </button>
 
       <button type="button" className="floating-cart" onClick={() => setCartOpen(true)}>
         <ShoppingCart size={18} />
