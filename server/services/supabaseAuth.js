@@ -24,9 +24,7 @@ export const verifySupabaseToken = async (token) => {
     return null;
   }
 
-  const user = data.user;
-  const isConfirmed = Boolean(user.email_confirmed_at);
-  return isConfirmed ? user : null;
+  return data.user;
 };
 
 export const getSupabaseAdminProfile = async (token) => {

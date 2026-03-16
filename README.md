@@ -29,8 +29,8 @@ npm run dev
 
 ## Login admin
 
-- o painel usa Supabase Auth (email + senha)
-- e necessario confirmar o email antes do acesso
+- padrao: `admin` / `123456`
+- ou Supabase Auth (email + senha)
 
 ## Variaveis uteis
 

@@ -32,6 +32,10 @@ const distDir = path.join(rootDir, "dist");
 const port = Number(process.env.PORT || 4000);
 const host = process.env.HOST || "0.0.0.0";
 
+const ADMIN_USER = process.env.ADMIN_USER || "admin";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "123456";
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "delivery-admin-token";
+
 
 const app = express();
 const server = createServer(app);
@@ -334,12 +338,16 @@ const applyPromotions = ({ db, subtotal, neighborhood, couponCode }) => {
 };
 
 const requireAdmin = async (request, response, next) => {
+  const authorization = request.headers.authorization || "";
+  const token = authorization.replace(/^Bearer\s+/i, "");
+
+  if (token === ADMIN_TOKEN) {
+    return next();
+  }
+
   if (!isSupabaseAuthEnabled()) {
     return response.status(503).json({ message: "Supabase Auth nao configurado." });
   }
-
-  const authorization = request.headers.authorization || "";
-  const token = authorization.replace(/^Bearer\s+/i, "");
 
   try {
     const user = await verifySupabaseToken(token);
@@ -376,6 +384,11 @@ io.on("connection", (socket) => {
 
   socket.on("admin:subscribe", async (token) => {
     if (!token) {
+      return;
+    }
+
+    if (token === ADMIN_TOKEN) {
+      socket.join("admins");
       return;
     }
 
@@ -808,15 +821,29 @@ app.post("/api/admin/pos/orders", requireAdmin, async (request, response) => {
   }
 });
 
-app.post("/api/admin/login", (_request, response) => {
-  return response.status(401).json({
-    message: "Login legado desativado. Use seu email e senha cadastrados."
+app.post("/api/admin/login", (request, response) => {
+  const { username, password } = request.body || {};
+
+  if (username !== ADMIN_USER || password !== ADMIN_PASSWORD) {
+    return response.status(401).json({ message: "Usuario ou senha invalidos." });
+  }
+
+  return response.json({
+    token: ADMIN_TOKEN,
+    user: {
+      name: "Operacao Turbo",
+      username: ADMIN_USER
+    }
   });
 });
 
 app.get("/api/admin/profile", requireAdmin, async (request, response) => {
   const authorization = request.headers.authorization || "";
   const token = authorization.replace(/^Bearer\s+/i, "");
+
+  if (!token || token === ADMIN_TOKEN) {
+    return response.json({ profile: null, confirmed: true, user: null });
+  }
 
   const data = await getSupabaseAdminProfile(token);
   if (!data) {
@@ -827,6 +854,41 @@ app.get("/api/admin/profile", requireAdmin, async (request, response) => {
     profile: data.profile,
     user: { email: data.user.email },
     confirmed: data.confirmed
+  });
+});
+
+app.get("/api/admin/debug-token", async (request, response) => {
+  const authorization = request.headers.authorization || "";
+  const token = authorization.replace(/^Bearer\s+/i, "");
+
+  if (!isSupabaseAuthEnabled()) {
+    return response.status(503).json({
+      ok: false,
+      reason: "Supabase Auth nao configurado no backend."
+    });
+  }
+
+  if (!token) {
+    return response.status(400).json({
+      ok: false,
+      reason: "Token ausente no header Authorization."
+    });
+  }
+
+  const data = await getSupabaseAdminProfile(token);
+  if (!data) {
+    return response.status(401).json({
+      ok: false,
+      reason: "Token invalido.",
+      emailConfirmed: false
+    });
+  }
+
+  return response.json({
+    ok: true,
+    email: data.user.email,
+    emailConfirmed: data.confirmed,
+    hasProfile: Boolean(data.profile)
   });
 });
 
@@ -1371,6 +1433,7 @@ initializeWhatsAppBot();
 
 server.listen(port, host, () => {
   console.log(`Delivery server running on http://${host}:${port}`);
+  console.log(`Admin padrao: ${ADMIN_USER} / ${ADMIN_PASSWORD}`);
   console.log(`Status disponiveis: ${STATUS_FLOW.map((status) => STATUS_LABELS[status]).join(", ")}`);
   console.log(`Loja publica: ${getPublicStoreUrl()}`);
   console.log(`WhatsApp: ${getWhatsAppStatus().enabled ? "habilitado" : "desativado"}`);
