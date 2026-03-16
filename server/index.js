@@ -15,6 +15,11 @@ import {
 } from "./services/whatsappTemplates.js";
 import { sendWhatsAppUpdate } from "./services/whatsapp.js";
 import {
+  getSupabaseAdminProfile,
+  isSupabaseAuthEnabled,
+  verifySupabaseToken
+} from "./services/supabaseAuth.js";
+import {
   getWhatsAppQrPage,
   getWhatsAppQrPngBuffer,
   getWhatsAppStatus,
@@ -27,9 +32,6 @@ const distDir = path.join(rootDir, "dist");
 const port = Number(process.env.PORT || 4000);
 const host = process.env.HOST || "0.0.0.0";
 
-const ADMIN_USER = process.env.ADMIN_USER || "admin";
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "123456";
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "delivery-admin-token";
 
 const app = express();
 const server = createServer(app);
@@ -331,11 +333,20 @@ const applyPromotions = ({ db, subtotal, neighborhood, couponCode }) => {
   };
 };
 
-const requireAdmin = (request, response, next) => {
+const requireAdmin = async (request, response, next) => {
+  if (!isSupabaseAuthEnabled()) {
+    return response.status(503).json({ message: "Supabase Auth nao configurado." });
+  }
+
   const authorization = request.headers.authorization || "";
   const token = authorization.replace(/^Bearer\s+/i, "");
 
-  if (token !== ADMIN_TOKEN) {
+  try {
+    const user = await verifySupabaseToken(token);
+    if (!user) {
+      return response.status(401).json({ message: "Nao autorizado." });
+    }
+  } catch (error) {
     return response.status(401).json({ message: "Nao autorizado." });
   }
 
@@ -363,9 +374,18 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("admin:subscribe", (token) => {
-    if (token === ADMIN_TOKEN) {
-      socket.join("admins");
+  socket.on("admin:subscribe", async (token) => {
+    if (!token) {
+      return;
+    }
+
+    try {
+      const user = await verifySupabaseToken(token);
+      if (user) {
+        socket.join("admins");
+      }
+    } catch (error) {
+      // ignore invalid tokens
     }
   });
 });
@@ -395,12 +415,13 @@ app.get("/api/whatsapp/qr.png", (_request, response) => {
   response.send(pngBuffer);
 });
 
-app.get("/api/store", (_request, response) => {
-  response.json(getStorePayload(readDB()));
+app.get("/api/store", async (_request, response) => {
+  const db = await readDB();
+  response.json(getStorePayload(db));
 });
 
-app.post("/api/customers/lookup", (request, response) => {
-  const db = readDB();
+app.post("/api/customers/lookup", async (request, response) => {
+  const db = await readDB();
   const phone = normalizePhone(request.body.phone);
   const customer = db.customers.find((entry) => normalizePhone(entry.phone) === phone);
 
@@ -417,8 +438,8 @@ app.post("/api/customers/lookup", (request, response) => {
   });
 });
 
-app.get("/api/orders/:id", (request, response) => {
-  const db = readDB();
+app.get("/api/orders/:id", async (request, response) => {
+  const db = await readDB();
   const order = db.orders.find((entry) => entry.id === request.params.id);
 
   if (!order) {
@@ -445,7 +466,7 @@ app.post("/api/orders", async (request, response) => {
   let createdOrder = null;
 
   try {
-    const db = updateDB((draft) => {
+    const db = await updateDB((draft) => {
       const items = payload.items
         .map((item) => {
           const product = draft.products.find((entry) => entry.id === item.productId);
@@ -577,7 +598,7 @@ app.post("/api/admin/pos/orders", requireAdmin, async (request, response) => {
   let createdOrder = null;
 
   try {
-    const db = updateDB((draft) => {
+    const db = await updateDB((draft) => {
       const items = payload.items
         .map((item) => {
           const product = draft.products.find((entry) => entry.id === item.productId);
@@ -787,28 +808,35 @@ app.post("/api/admin/pos/orders", requireAdmin, async (request, response) => {
   }
 });
 
-app.post("/api/admin/login", (request, response) => {
-  const { username, password } = request.body || {};
-
-  if (username !== ADMIN_USER || password !== ADMIN_PASSWORD) {
-    return response.status(401).json({ message: "Usuario ou senha invalidos." });
-  }
-
-  return response.json({
-    token: ADMIN_TOKEN,
-    user: {
-      name: "Operacao Turbo",
-      username: ADMIN_USER
-    }
+app.post("/api/admin/login", (_request, response) => {
+  return response.status(401).json({
+    message: "Login legado desativado. Use seu email e senha cadastrados."
   });
 });
 
-app.get("/api/admin/dashboard", requireAdmin, (_request, response) => {
-  response.json(buildDashboard(readDB()));
+app.get("/api/admin/profile", requireAdmin, async (request, response) => {
+  const authorization = request.headers.authorization || "";
+  const token = authorization.replace(/^Bearer\s+/i, "");
+
+  const data = await getSupabaseAdminProfile(token);
+  if (!data) {
+    return response.status(401).json({ message: "Nao autorizado." });
+  }
+
+  return response.json({
+    profile: data.profile,
+    user: { email: data.user.email },
+    confirmed: data.confirmed
+  });
 });
 
-app.get("/api/admin/orders", requireAdmin, (_request, response) => {
-  const db = readDB();
+app.get("/api/admin/dashboard", requireAdmin, async (_request, response) => {
+  const db = await readDB();
+  response.json(buildDashboard(db));
+});
+
+app.get("/api/admin/orders", requireAdmin, async (_request, response) => {
+  const db = await readDB();
 
   response.json(
     [...db.orders].sort(
@@ -827,7 +855,7 @@ app.patch("/api/admin/orders/:id/status", requireAdmin, async (request, response
   let updatedOrder = null;
 
   try {
-    updateDB((draft) => {
+    await updateDB((draft) => {
       const order = draft.orders.find((entry) => entry.id === request.params.id);
 
       if (!order) {
@@ -857,11 +885,12 @@ app.patch("/api/admin/orders/:id/status", requireAdmin, async (request, response
   }
 });
 
-app.get("/api/admin/products", requireAdmin, (_request, response) => {
-  response.json(readDB().products);
+app.get("/api/admin/products", requireAdmin, async (_request, response) => {
+  const db = await readDB();
+  response.json(db.products);
 });
 
-app.post("/api/admin/products", requireAdmin, (request, response) => {
+app.post("/api/admin/products", requireAdmin, async (request, response) => {
   const payload = request.body || {};
 
   if (!payload.name || !payload.category) {
@@ -873,7 +902,7 @@ app.post("/api/admin/products", requireAdmin, (request, response) => {
   }
 
   let createdProduct = null;
-  const db = updateDB((draft) => {
+  const db = await updateDB((draft) => {
     const salePrice = resolveSalePrice(payload);
 
     createdProduct = {
@@ -898,7 +927,7 @@ app.post("/api/admin/products", requireAdmin, (request, response) => {
   return response.status(201).json(createdProduct);
 });
 
-app.put("/api/admin/products/:id", requireAdmin, (request, response) => {
+app.put("/api/admin/products/:id", requireAdmin, async (request, response) => {
   const payload = request.body || {};
   let updatedProduct = null;
 
@@ -907,7 +936,7 @@ app.put("/api/admin/products/:id", requireAdmin, (request, response) => {
   }
 
   try {
-    const db = updateDB((draft) => {
+    const db = await updateDB((draft) => {
       const product = draft.products.find((entry) => entry.id === request.params.id);
 
       if (!product) {
@@ -946,8 +975,8 @@ app.put("/api/admin/products/:id", requireAdmin, (request, response) => {
   }
 });
 
-app.delete("/api/admin/products/:id", requireAdmin, (request, response) => {
-  const db = updateDB((draft) => {
+app.delete("/api/admin/products/:id", requireAdmin, async (request, response) => {
+  const db = await updateDB((draft) => {
     draft.products = draft.products.filter((entry) => entry.id !== request.params.id);
     return draft;
   });
@@ -956,11 +985,11 @@ app.delete("/api/admin/products/:id", requireAdmin, (request, response) => {
   return response.status(204).end();
 });
 
-app.patch("/api/admin/products/:id/toggle", requireAdmin, (request, response) => {
+app.patch("/api/admin/products/:id/toggle", requireAdmin, async (request, response) => {
   let updatedProduct = null;
 
   try {
-    const db = updateDB((draft) => {
+    const db = await updateDB((draft) => {
       const product = draft.products.find((entry) => entry.id === request.params.id);
 
       if (!product) {
@@ -979,15 +1008,16 @@ app.patch("/api/admin/products/:id/toggle", requireAdmin, (request, response) =>
   }
 });
 
-app.get("/api/admin/promotions", requireAdmin, (_request, response) => {
-  response.json(readDB().promotions);
+app.get("/api/admin/promotions", requireAdmin, async (_request, response) => {
+  const db = await readDB();
+  response.json(db.promotions);
 });
 
-app.post("/api/admin/promotions", requireAdmin, (request, response) => {
+app.post("/api/admin/promotions", requireAdmin, async (request, response) => {
   const payload = request.body || {};
   let createdPromotion = null;
 
-  updateDB((draft) => {
+  await updateDB((draft) => {
     createdPromotion = {
       id: createId("promo"),
       type: payload.type || "daily",
@@ -1010,12 +1040,12 @@ app.post("/api/admin/promotions", requireAdmin, (request, response) => {
   return response.status(201).json(createdPromotion);
 });
 
-app.put("/api/admin/promotions/:id", requireAdmin, (request, response) => {
+app.put("/api/admin/promotions/:id", requireAdmin, async (request, response) => {
   const payload = request.body || {};
   let updatedPromotion = null;
 
   try {
-    updateDB((draft) => {
+    await updateDB((draft) => {
       const promotion = draft.promotions.find((entry) => entry.id === request.params.id);
 
       if (!promotion) {
@@ -1054,8 +1084,8 @@ app.put("/api/admin/promotions/:id", requireAdmin, (request, response) => {
   }
 });
 
-app.delete("/api/admin/promotions/:id", requireAdmin, (request, response) => {
-  updateDB((draft) => {
+app.delete("/api/admin/promotions/:id", requireAdmin, async (request, response) => {
+  await updateDB((draft) => {
     draft.promotions = draft.promotions.filter((entry) => entry.id !== request.params.id);
     return draft;
   });
@@ -1064,8 +1094,8 @@ app.delete("/api/admin/promotions/:id", requireAdmin, (request, response) => {
   return response.status(204).end();
 });
 
-app.get("/api/admin/expenses", requireAdmin, (_request, response) => {
-  const db = readDB();
+app.get("/api/admin/expenses", requireAdmin, async (_request, response) => {
+  const db = await readDB();
   const expenses = Array.isArray(db.expenses) ? db.expenses : [];
   response.json(
     [...expenses].sort(
@@ -1076,7 +1106,7 @@ app.get("/api/admin/expenses", requireAdmin, (_request, response) => {
   );
 });
 
-app.post("/api/admin/expenses", requireAdmin, (request, response) => {
+app.post("/api/admin/expenses", requireAdmin, async (request, response) => {
   const payload = request.body || {};
 
   if (!payload.title || !parseMoney(payload.amount)) {
@@ -1095,7 +1125,7 @@ app.post("/api/admin/expenses", requireAdmin, (request, response) => {
     updatedAt: now
   };
 
-  const db = updateDB((draft) => {
+  const db = await updateDB((draft) => {
     draft.expenses = Array.isArray(draft.expenses) ? draft.expenses : [];
     draft.expenses.push(expense);
     return draft;
@@ -1109,13 +1139,13 @@ app.post("/api/admin/expenses", requireAdmin, (request, response) => {
   });
 });
 
-app.put("/api/admin/expenses/:id", requireAdmin, (request, response) => {
+app.put("/api/admin/expenses/:id", requireAdmin, async (request, response) => {
   const payload = request.body || {};
   const now = new Date().toISOString();
   let updatedExpense = null;
 
   try {
-    updateDB((draft) => {
+    await updateDB((draft) => {
       draft.expenses = Array.isArray(draft.expenses) ? draft.expenses : [];
       const expense = draft.expenses.find((entry) => entry.id === request.params.id);
 
@@ -1150,8 +1180,8 @@ app.put("/api/admin/expenses/:id", requireAdmin, (request, response) => {
   }
 });
 
-app.delete("/api/admin/expenses/:id", requireAdmin, (request, response) => {
-  updateDB((draft) => {
+app.delete("/api/admin/expenses/:id", requireAdmin, async (request, response) => {
+  await updateDB((draft) => {
     draft.expenses = Array.isArray(draft.expenses) ? draft.expenses : [];
     draft.expenses = draft.expenses.filter((expense) => expense.id !== request.params.id);
     return draft;
@@ -1160,15 +1190,15 @@ app.delete("/api/admin/expenses/:id", requireAdmin, (request, response) => {
   return response.json({ ok: true });
 });
 
-app.get("/api/admin/riders", requireAdmin, (_request, response) => {
-  const db = readDB();
+app.get("/api/admin/riders", requireAdmin, async (_request, response) => {
+  const db = await readDB();
   const riders = Array.isArray(db.riders) ? db.riders : [];
   response.json(
     [...riders].sort((left, right) => left.name.localeCompare(right.name))
   );
 });
 
-app.post("/api/admin/riders", requireAdmin, (request, response) => {
+app.post("/api/admin/riders", requireAdmin, async (request, response) => {
   const payload = request.body || {};
 
   if (!payload.name) {
@@ -1185,7 +1215,7 @@ app.post("/api/admin/riders", requireAdmin, (request, response) => {
     updatedAt: now
   };
 
-  updateDB((draft) => {
+  await updateDB((draft) => {
     draft.riders = Array.isArray(draft.riders) ? draft.riders : [];
     draft.riders.push(rider);
     return draft;
@@ -1194,13 +1224,13 @@ app.post("/api/admin/riders", requireAdmin, (request, response) => {
   return response.status(201).json(rider);
 });
 
-app.put("/api/admin/riders/:id", requireAdmin, (request, response) => {
+app.put("/api/admin/riders/:id", requireAdmin, async (request, response) => {
   const payload = request.body || {};
   const now = new Date().toISOString();
   let updatedRider = null;
 
   try {
-    updateDB((draft) => {
+    await updateDB((draft) => {
       draft.riders = Array.isArray(draft.riders) ? draft.riders : [];
       const rider = draft.riders.find((entry) => entry.id === request.params.id);
 
@@ -1229,8 +1259,8 @@ app.put("/api/admin/riders/:id", requireAdmin, (request, response) => {
   }
 });
 
-app.delete("/api/admin/riders/:id", requireAdmin, (request, response) => {
-  updateDB((draft) => {
+app.delete("/api/admin/riders/:id", requireAdmin, async (request, response) => {
+  await updateDB((draft) => {
     draft.riders = Array.isArray(draft.riders) ? draft.riders : [];
     draft.riders = draft.riders.filter((rider) => rider.id !== request.params.id);
     draft.orders = draft.orders.map((order) =>
@@ -1242,12 +1272,12 @@ app.delete("/api/admin/riders/:id", requireAdmin, (request, response) => {
   return response.json({ ok: true });
 });
 
-app.put("/api/admin/orders/:id/rider", requireAdmin, (request, response) => {
+app.put("/api/admin/orders/:id/rider", requireAdmin, async (request, response) => {
   const { riderId } = request.body || {};
   let updatedOrder = null;
 
   try {
-    updateDB((draft) => {
+    await updateDB((draft) => {
       const order = draft.orders.find((entry) => entry.id === request.params.id);
 
       if (!order) {
@@ -1275,8 +1305,8 @@ app.put("/api/admin/orders/:id/rider", requireAdmin, (request, response) => {
   }
 });
 
-app.get("/api/admin/customers", requireAdmin, (_request, response) => {
-  const db = readDB();
+app.get("/api/admin/customers", requireAdmin, async (_request, response) => {
+  const db = await readDB();
   const customers = db.customers.map((customer) => ({
     ...customer,
     previousOrders: customer.orderIds
@@ -1287,10 +1317,10 @@ app.get("/api/admin/customers", requireAdmin, (_request, response) => {
   response.json(customers.sort((left, right) => right.totalSpent - left.totalSpent));
 });
 
-app.put("/api/admin/settings/fees", requireAdmin, (request, response) => {
+app.put("/api/admin/settings/fees", requireAdmin, async (request, response) => {
   const fees = request.body.fees || {};
 
-  const db = updateDB((draft) => {
+  const db = await updateDB((draft) => {
     draft.settings.deliveryFees = Object.fromEntries(
       Object.entries(fees)
         .map(([neighborhood, fee]) => [neighborhood, Number(fee)])
@@ -1303,8 +1333,8 @@ app.put("/api/admin/settings/fees", requireAdmin, (request, response) => {
   return response.json(db.settings.deliveryFees);
 });
 
-app.get("/api/admin/reports", requireAdmin, (request, response) => {
-  const db = readDB();
+app.get("/api/admin/reports", requireAdmin, async (request, response) => {
+  const db = await readDB();
   const dashboard = buildDashboard(db);
   const requestedDays = Number(request.query.days || 7);
   const periodDays = Number.isFinite(requestedDays)
@@ -1341,7 +1371,6 @@ initializeWhatsAppBot();
 
 server.listen(port, host, () => {
   console.log(`Delivery server running on http://${host}:${port}`);
-  console.log(`Admin padrao: ${ADMIN_USER} / ${ADMIN_PASSWORD}`);
   console.log(`Status disponiveis: ${STATUS_FLOW.map((status) => STATUS_LABELS[status]).join(", ")}`);
   console.log(`Loja publica: ${getPublicStoreUrl()}`);
   console.log(`WhatsApp: ${getWhatsAppStatus().enabled ? "habilitado" : "desativado"}`);

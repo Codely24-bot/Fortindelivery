@@ -27,18 +27,21 @@ npm run dev
 - admin: `http://localhost:5173/admin`
 - QR do WhatsApp: `http://localhost:4000/api/whatsapp/qr`
 
-## Login padrao
+## Login admin
 
-- usuario: `admin`
-- senha: `123456`
+- o painel usa Supabase Auth (email + senha)
+- e necessario confirmar o email antes do acesso
 
 ## Variaveis uteis
 
 - `PORT=4000`
 - `PUBLIC_STORE_URL=http://localhost:5173`
-- `ADMIN_USER=admin`
-- `ADMIN_PASSWORD=123456`
-- `ADMIN_TOKEN=delivery-admin-token`
+- `SUPABASE_URL=https://<project-id>.supabase.co`
+- `SUPABASE_SERVICE_ROLE_KEY=chave_service_role`
+- `SUPABASE_PROJECT_ID=<project-id>` (opcional, usado se `SUPABASE_URL` nao estiver definido)
+- `VITE_SUPABASE_URL=https://<project-id>.supabase.co` (front direto)
+- `VITE_SUPABASE_ANON_KEY=chave_anon` (front direto)
+- `VITE_PUBLIC_STORE_URL=http://localhost:5173` (opcional)
 - `WHATSAPP_ENABLED=true`
 - `WHATSAPP_CLIENT_ID=delivery-distribuidora`
 - `WHATSAPP_HEADLESS=true`
@@ -55,7 +58,7 @@ npm run dev
 4. Volume: monte em `/data`.
 5. Mantenha apenas `1` replica do servico para nao corromper `db.json` nem a sessao do WhatsApp.
 6. Variaveis sugeridas:
-   - `ADMIN_USER`, `ADMIN_PASSWORD`, `ADMIN_TOKEN`
+   - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
    - `WHATSAPP_ENABLED=true`
    - `WHATSAPP_HEADLESS=true`
    - `DATA_DIR=/data`
@@ -88,8 +91,45 @@ npm run dev
 
 ## Observacoes
 
-- os dados ficam em `server/data/db.json`
+- com Supabase configurado, os dados ficam na tabela `app_state`
+- sem Supabase, os dados continuam em `server/data/db.json`
 - a sessao do WhatsApp fica em `.wwebjs_auth`
 - o cache do WhatsApp Web fica em `.wwebjs_cache`
 - para deploy com Chrome headless, o projeto inclui `nixpacks.toml`
 - se quiser desligar o bot sem remover a integracao, use `WHATSAPP_ENABLED=false`
+
+## Supabase
+
+1. Crie o schema executando `supabase/schema.sql`.
+2. Defina `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY`.
+3. Migre os dados locais:
+
+```bash
+node scripts/migrate-supabase.js
+```
+
+Se quiser sobrescrever dados existentes:
+
+```bash
+MIGRATE_FORCE=true node scripts/migrate-supabase.js
+```
+
+Para o front consumir direto do Supabase:
+
+- defina `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY`
+- o front usa o Supabase para carregar `settings`, `products` e `promotions`
+- o checkout usa a funcao SQL `create_order` (RPC) para criar pedidos direto no banco
+- o login admin pode usar Supabase Auth (email/senha + confirmacao por email)
+
+Cadastro admin:
+
+- acesse `/admin/cadastro`
+- preencha os dados e confirme o email
+- depois, use o email e senha no `/admin`
+- para editar os dados, acesse `/admin/conta`
+
+RPCs admin (somente server-side):
+
+- o schema inclui funcoes `admin_*` para produtos, promocoes, despesas, motoboys, taxas e status de pedido
+- por seguranca, essas funcoes nao sao executaveis com `anon`/`authenticated`
+- use o backend (service role) para chamar essas RPCs quando quiser substituir o acesso direto ao banco

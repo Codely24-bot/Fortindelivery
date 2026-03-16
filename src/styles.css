@@ -224,6 +224,42 @@ small {
   gap: 1rem;
 }
 
+.admin-store-title {
+  font-size: clamp(1.6rem, 2.2vw, 2.3rem);
+  letter-spacing: -0.02em;
+}
+
+.admin-badges {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.28rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+}
+
+.status-badge.is-ok {
+  color: #0d4b37;
+  background: rgba(16, 130, 90, 0.12);
+  border-color: rgba(16, 130, 90, 0.28);
+}
+
+.status-badge.is-warn {
+  color: #6f3a00;
+  background: rgba(244, 162, 97, 0.18);
+  border-color: rgba(244, 162, 97, 0.4);
+}
+
 .brand-mark {
   display: inline-flex;
   align-items: center;

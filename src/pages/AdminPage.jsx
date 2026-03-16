@@ -22,6 +22,7 @@ import {
   Users
 } from "lucide-react";
 import { api, socket } from "../api";
+import { supabase } from "../supabase";
 import BrandLogo from "../components/BrandLogo";
 import MetricCard from "../components/MetricCard";
 import { STATUS_STEPS } from "../components/StatusTimeline";
@@ -378,7 +379,7 @@ const getWhatsAppMeta = (status) => {
 
 function AdminPage() {
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY) || "");
-  const [loginForm, setLoginForm] = useState({ username: "admin", password: "123456" });
+  const [loginForm, setLoginForm] = useState({ username: "", password: "" });
   const [activeTab, setActiveTab] = useState("orders");
   const [loading, setLoading] = useState(Boolean(token));
   const [saving, setSaving] = useState(false);
@@ -388,6 +389,8 @@ function AdminPage() {
   const [orders, setOrders] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [reports, setReports] = useState(null);
+  const [adminProfile, setAdminProfile] = useState(null);
+  const [adminConfirmed, setAdminConfirmed] = useState(false);
   const [reportsDays, setReportsDays] = useState(7);
   const [loadError, setLoadError] = useState("");
   const [productForm, setProductForm] = useState(defaultProductForm);
@@ -494,17 +497,20 @@ function AdminPage() {
     setLoadError("");
 
     try {
-      const [dashboardPayload, ordersPayload, customersPayload, reportsPayload] = await Promise.all([
+      const [dashboardPayload, ordersPayload, customersPayload, reportsPayload, profilePayload] = await Promise.all([
         api.getDashboard(currentToken),
         api.getOrders(currentToken),
         api.getCustomers(currentToken),
-        api.getReports(currentToken, reportsDays)
+        api.getReports(currentToken, reportsDays),
+        api.getAdminProfile(currentToken)
       ]);
 
       setDashboard(dashboardPayload);
       setOrders(ordersPayload);
       setCustomers(customersPayload);
       setReports(reportsPayload);
+      setAdminProfile(profilePayload?.profile || null);
+      setAdminConfirmed(Boolean(profilePayload?.confirmed));
       setFeeRows(
         Object.entries(dashboardPayload.deliveryFees || {}).map(([name, value]) => ({
           name,
@@ -532,6 +538,44 @@ function AdminPage() {
       setMessage(error.message);
     }
   };
+
+  useEffect(() => {
+    if (!supabase) {
+      return undefined;
+    }
+
+    let mounted = true;
+
+    const syncSession = async () => {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data?.session?.access_token || "";
+      if (!mounted) {
+        return;
+      }
+      if (accessToken) {
+        localStorage.setItem(TOKEN_KEY, accessToken);
+        setToken(accessToken);
+      }
+    };
+
+    syncSession();
+
+    const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
+      const accessToken = session?.access_token || "";
+      if (accessToken) {
+        localStorage.setItem(TOKEN_KEY, accessToken);
+        setToken(accessToken);
+      } else {
+        localStorage.removeItem(TOKEN_KEY);
+        setToken("");
+      }
+    });
+
+    return () => {
+      mounted = false;
+      subscription?.subscription?.unsubscribe?.();
+    };
+  }, []);
 
   useEffect(() => {
     if (!token) {
@@ -618,28 +662,50 @@ function AdminPage() {
     setLoading(true);
     setMessage("");
     try {
-      const payload = await api.adminLogin(loginForm);
-      localStorage.setItem(TOKEN_KEY, payload.token);
-      setToken(payload.token);
+      if (!supabase) {
+        throw new Error("Supabase Auth nao configurado.");
+      }
+
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: loginForm.username.trim(),
+        password: loginForm.password
+      });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      const accessToken = data?.session?.access_token;
+      if (!accessToken) {
+        throw new Error("Confirme seu email para acessar o painel.");
+      }
+
+      localStorage.setItem(TOKEN_KEY, accessToken);
+      setToken(accessToken);
     } catch (error) {
       setLoading(false);
       setMessage(error.message);
     }
   };
 
-  const logout = () => {
+  const logout = async () => {
     localStorage.removeItem(TOKEN_KEY);
     setToken("");
     setDashboard(null);
     setOrders([]);
     setCustomers([]);
     setReports(null);
+    setAdminProfile(null);
+    setAdminConfirmed(false);
     setExpenseForm(defaultExpenseForm);
     setEditingExpenseId("");
     setRiderForm(defaultRiderForm);
     setEditingRiderId("");
     setSoundEnabled(false);
     setMessage("");
+    if (supabase) {
+      await supabase.auth.signOut();
+    }
   };
 
   const productCatalog = dashboard?.products ?? [];
@@ -814,10 +880,16 @@ function AdminPage() {
           <span className="eyebrow">Painel da distribuidora</span>
           <h1>Operacao em tempo real</h1>
           <p>Controle pedidos, clientes, estoque e automacao do WhatsApp em um unico lugar.</p>
+          {!supabase ? (
+            <div className="toast-inline">
+              Configure VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY para acessar.
+            </div>
+          ) : null}
           <div className="field-grid single">
             <label>
-              Usuario
+              Email
               <input
+                type="email"
                 value={loginForm.username}
                 onChange={(event) => setLoginForm((current) => ({ ...current, username: event.target.value }))}
               />
@@ -834,6 +906,9 @@ function AdminPage() {
           <button type="button" className="button button-primary button-block" onClick={handleLogin} disabled={loading}>
             {loading ? "Entrando..." : "Entrar no painel"}
           </button>
+          <Link to="/admin/cadastro" className="button button-outline button-block">
+            Criar conta de admin
+          </Link>
           <Link to="/" className="button button-outline button-block">
             Voltar para loja
           </Link>
@@ -851,7 +926,17 @@ function AdminPage() {
             <BrandLogo subtitle="Painel operacional" variant="admin" to="/" />
             <div>
               <span className="eyebrow">Dashboard operacional</span>
-              <h1>Turbo Drinks Admin</h1>
+              <h1 className="admin-store-title">
+                {adminProfile?.store_name || "Turbo Drinks Admin"}
+              </h1>
+              {adminProfile ? (
+                <small>Proprietario: {adminProfile.owner_name}</small>
+              ) : null}
+              <div className="admin-badges">
+                <span className={`status-badge ${adminConfirmed ? "is-ok" : "is-warn"}`}>
+                  {adminConfirmed ? "Conta confirmada" : "Email nao confirmado"}
+                </span>
+              </div>
             </div>
           </div>
         </header>
@@ -871,7 +956,17 @@ function AdminPage() {
             <BrandLogo subtitle="Painel operacional" variant="admin" to="/" />
             <div>
               <span className="eyebrow">Dashboard operacional</span>
-              <h1>Turbo Drinks Admin</h1>
+              <h1 className="admin-store-title">
+                {adminProfile?.store_name || "Turbo Drinks Admin"}
+              </h1>
+              {adminProfile ? (
+                <small>Proprietario: {adminProfile.owner_name}</small>
+              ) : null}
+              <div className="admin-badges">
+                <span className={`status-badge ${adminConfirmed ? "is-ok" : "is-warn"}`}>
+                  {adminConfirmed ? "Conta confirmada" : "Email nao confirmado"}
+                </span>
+              </div>
             </div>
           </div>
           <div className="admin-header-actions">
@@ -879,6 +974,9 @@ function AdminPage() {
               <RefreshCcw size={16} />
               Tentar novamente
             </button>
+            <Link to="/admin/conta" className="button button-outline">
+              Minha conta
+            </Link>
             <button type="button" className="button button-muted" onClick={logout}>
               <LogOut size={16} />
               Sair
@@ -1316,7 +1414,17 @@ function AdminPage() {
           <BrandLogo subtitle="Painel operacional" variant="admin" to="/" />
           <div>
             <span className="eyebrow">Dashboard operacional</span>
-            <h1>Turbo Drinks Admin</h1>
+            <h1 className="admin-store-title">
+              {adminProfile?.store_name || "Turbo Drinks Admin"}
+            </h1>
+            {adminProfile ? (
+              <small>Proprietario: {adminProfile.owner_name}</small>
+            ) : null}
+            <div className="admin-badges">
+              <span className={`status-badge ${adminConfirmed ? "is-ok" : "is-warn"}`}>
+                {adminConfirmed ? "Conta confirmada" : "Email nao confirmado"}
+              </span>
+            </div>
           </div>
         </div>
         <div className="admin-header-actions">
@@ -1324,6 +1432,9 @@ function AdminPage() {
             <RefreshCcw size={16} />
             Atualizar
           </button>
+          <Link to="/admin/conta" className="button button-outline">
+            Minha conta
+          </Link>
           <button
             type="button"
             className={`button ${soundEnabled ? "button-soft" : "button-muted"}`}

@@ -1,4 +1,5 @@
 import { io } from "socket.io-client";
+import { supabase } from "./supabase";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 const SOCKET_URL =
@@ -24,15 +25,115 @@ const request = async (path, options = {}) => {
   return payload;
 };
 
+const mapSettingsRow = (row) => ({
+  storeName: row.store_name || "",
+  tagline: row.tagline || "",
+  bannerTitle: row.banner_title || "",
+  bannerSubtitle: row.banner_subtitle || "",
+  addressLine: row.address_line || "",
+  city: row.city || "",
+  mapsUrl: row.maps_url || "",
+  openingHoursText: row.opening_hours_text || "",
+  whatsappNumber: row.whatsapp_number || "",
+  quickMessage: row.quick_message || "",
+  supportText: row.support_text || "",
+  deliveryFees: row.delivery_fees || {}
+});
+
+const getPublicStoreUrl = () =>
+  import.meta.env.VITE_PUBLIC_STORE_URL || window.location.origin;
+
+const getStoreFromSupabase = async () => {
+  if (!supabase) {
+    return null;
+  }
+
+  const [settingsRes, productsRes, promotionsRes] = await Promise.all([
+    supabase.from("settings").select("*").eq("id", 1).maybeSingle(),
+    supabase.from("products").select("*"),
+    supabase.from("promotions").select("*")
+  ]);
+
+  const error = settingsRes.error || productsRes.error || promotionsRes.error;
+  if (error) {
+    throw new Error(error.message || "Falha ao carregar dados do Supabase.");
+  }
+
+  const settings = settingsRes.data ? mapSettingsRow(settingsRes.data) : {};
+  const products = (productsRes.data || [])
+    .map((product) => ({
+      id: product.id,
+      name: product.name,
+      category: product.category,
+      volume: product.volume || "",
+      salePrice: Number(product.sale_price ?? 0),
+      purchasePrice: Number(product.purchase_price ?? 0),
+      stock: Number(product.stock ?? 0),
+      active: product.active ?? true,
+      featured: product.featured ?? false,
+      badge: product.badge || "",
+      description: product.description || "",
+      image: product.image || ""
+    }))
+    .filter((product) => product.active && product.stock > 0)
+    .sort(
+      (left, right) =>
+        Number(right.featured) - Number(left.featured) || left.salePrice - right.salePrice
+    );
+  const promotions = (promotionsRes.data || [])
+    .map((promo) => ({
+      id: promo.id,
+      type: promo.type,
+      title: promo.title,
+      description: promo.description || "",
+      code: promo.code || "",
+      discountType: promo.discount_type || "fixed",
+      discountValue: Number(promo.discount_value ?? 0),
+      minimumOrder: Number(promo.minimum_order ?? 0),
+      neighborhood: promo.neighborhood || "",
+      active: promo.active ?? true,
+      highlight: promo.highlight || ""
+    }))
+    .filter((promo) => promo.active);
+
+  const categories = [
+    ...new Set(products.map((product) => product.category).filter(Boolean))
+  ];
+
+  return {
+    settings: {
+      ...settings,
+      publicStoreUrl: getPublicStoreUrl()
+    },
+    categories,
+    products,
+    featuredProducts: products.filter((product) => product.featured),
+    promotions
+  };
+};
+
+const createOrderFromSupabase = async (body) => {
+  if (!supabase) {
+    return null;
+  }
+
+  const { data, error } = await supabase.rpc("create_order", { payload: body });
+  if (error) {
+    throw new Error(error.message || "Falha ao criar pedido no Supabase.");
+  }
+
+  return { order: data };
+};
+
 export const api = {
-  getStore: () => request("/api/store"),
+  getStore: async () => (await getStoreFromSupabase()) || request("/api/store"),
   getWhatsAppStatus: () => request("/api/whatsapp/status"),
   lookupCustomer: (phone) =>
     request("/api/customers/lookup", {
       method: "POST",
       body: JSON.stringify({ phone })
     }),
-  createOrder: (body) =>
+  createOrder: async (body) => (await createOrderFromSupabase(body)) ||
     request("/api/orders", {
       method: "POST",
       body: JSON.stringify(body)
@@ -42,6 +143,10 @@ export const api = {
     request("/api/admin/login", {
       method: "POST",
       body: JSON.stringify(credentials)
+    }),
+  getAdminProfile: (token) =>
+    request("/api/admin/profile", {
+      headers: { Authorization: `Bearer ${token}` }
     }),
   getDashboard: (token) =>
     request("/api/admin/dashboard", {

@@ -53,13 +53,13 @@ const normalizeText = (text = "") =>
     .toLowerCase()
     .trim();
 
-const getSettings = () => readDB().settings;
-const getStoreName = () => getSettings().storeName || "Distribuidora Delivery";
-const getOpeningHoursText = () =>
-  getSettings().openingHoursText ||
+const getSettings = async () => (await readDB()).settings;
+const getStoreName = async () => (await getSettings()).storeName || "Distribuidora Delivery";
+const getOpeningHoursText = async () =>
+  (await getSettings()).openingHoursText ||
   "Horario de funcionamento indisponivel no momento. Digite menu para voltar.";
-const getAddressText = () => {
-  const settings = getSettings();
+const getAddressText = async () => {
+  const settings = await getSettings();
   const lines = ["*Nosso endereco*"];
 
   if (settings.addressLine) {
@@ -77,19 +77,19 @@ const getAddressText = () => {
   return lines.join("\n");
 };
 
-const getDeliveryFees = () => getSettings().deliveryFees || {};
+const getDeliveryFees = async () => (await getSettings()).deliveryFees || {};
 
-const buildNeighborhoodList = () =>
-  Object.keys(getDeliveryFees())
+const buildNeighborhoodList = async () =>
+  Object.keys(await getDeliveryFees())
     .sort((left, right) => left.localeCompare(right))
     .map((name) => `- ${name}`)
     .join("\n");
 
 const getStoreLink = () => getPublicStoreUrl();
 
-const buildMenuMessage = () =>
+const buildMenuMessage = async () =>
   [
-    `*${getStoreName()}*`,
+    `*${await getStoreName()}*`,
     "",
     "Seu pedido de bebidas esta a poucos cliques.",
     "",
@@ -103,9 +103,9 @@ const buildMenuMessage = () =>
     "5. Status do meu pedido"
   ].join("\n");
 
-const buildCatalogMessage = () =>
+const buildCatalogMessage = async () =>
   [
-    `*${getStoreName()}*`,
+    `*${await getStoreName()}*`,
     "",
     "Monte seu pedido no catalogo online e acompanhe o status em tempo real:",
     getStoreLink(),
@@ -113,18 +113,18 @@ const buildCatalogMessage = () =>
     "Se precisar, digite *menu* para ver taxa, bairros, horario, endereco e pedido."
   ].join("\n");
 
-const getLatestOrderByPhone = (phone) => {
-  const db = readDB();
+const getLatestOrderByPhone = async (phone) => {
+  const db = await readDB();
 
   return [...db.orders]
     .filter((order) => phonesMatch(order.customer.phone, phone))
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())[0];
 };
 
-const findNeighborhoodFee = (input) => {
+const findNeighborhoodFee = async (input) => {
   const normalizedInput = normalizeText(input);
 
-  return Object.entries(getDeliveryFees()).find(
+  return Object.entries(await getDeliveryFees()).find(
     ([name]) => normalizeText(name) === normalizedInput
   );
 };
@@ -193,14 +193,14 @@ const sendTypingAndMessage = async (chat, destination, text) => {
 };
 
 const handleOrderLookup = async (message, chat) => {
-  const latestOrder = getLatestOrderByPhone(message.from);
+  const latestOrder = await getLatestOrderByPhone(message.from);
 
   if (!latestOrder) {
     await sendTypingAndMessage(
       chat,
       message.from,
       [
-        `*${getStoreName()}*`,
+        `*${await getStoreName()}*`,
         "",
         "Nao encontrei um pedido recente para este numero.",
         `Voce pode fazer um novo pedido aqui: ${getStoreLink()}`
@@ -212,7 +212,7 @@ const handleOrderLookup = async (message, chat) => {
   await sendTypingAndMessage(
     chat,
     message.from,
-    buildOrderLookupMessage(latestOrder, getStoreName())
+    buildOrderLookupMessage(latestOrder, await getStoreName())
   );
   return true;
 };
@@ -271,7 +271,7 @@ const handleIncomingMessage = async (message) => {
   const goodbyeTriggers = ["tchau", "falou", "ate mais", "boa noite"];
 
   if (menuTriggers.test(text)) {
-    await sendTypingAndMessage(chat, message.from, buildMenuMessage());
+    await sendTypingAndMessage(chat, message.from, await buildMenuMessage());
     session.step = "menu";
     return;
   }
@@ -283,7 +283,7 @@ const handleIncomingMessage = async (message) => {
   }
 
   if (catalogTriggers.some((item) => text.includes(item))) {
-    await sendTypingAndMessage(chat, message.from, buildCatalogMessage());
+    await sendTypingAndMessage(chat, message.from, await buildCatalogMessage());
     session.step = "menu";
     return;
   }
@@ -328,21 +328,25 @@ const handleIncomingMessage = async (message) => {
       await sendTypingAndMessage(
         chat,
         message.from,
-        [`*Bairros atendidos*`, "", buildNeighborhoodList(), "", "Digite seu bairro para consultar a taxa."].join(
-          "\n"
-        )
+        [
+          `*Bairros atendidos*`,
+          "",
+          await buildNeighborhoodList(),
+          "",
+          "Digite seu bairro para consultar a taxa."
+        ].join("\n")
       );
       session.step = "delivery_fee";
       return;
     }
 
     if (text === "3") {
-      await sendTypingAndMessage(chat, message.from, getOpeningHoursText());
+      await sendTypingAndMessage(chat, message.from, await getOpeningHoursText());
       return;
     }
 
     if (text === "4") {
-      await sendTypingAndMessage(chat, message.from, getAddressText());
+      await sendTypingAndMessage(chat, message.from, await getAddressText());
       return;
     }
 
@@ -353,7 +357,7 @@ const handleIncomingMessage = async (message) => {
   }
 
   if (session.step === "delivery_fee") {
-    const neighborhood = findNeighborhoodFee(text);
+    const neighborhood = await findNeighborhoodFee(text);
 
     if (neighborhood) {
       const [name, fee] = neighborhood;
@@ -599,7 +603,7 @@ export const sendWhatsAppText = async ({ phone, message }) => {
 };
 
 export const sendOrderStatusUpdate = async (order, status) => {
-  const settings = getSettings();
+  const settings = await getSettings();
   const message = buildOrderStatusMessage(order, status, settings.storeName);
   return sendWhatsAppText({
     phone: normalizePhone(order.customer.phone),
@@ -607,8 +611,8 @@ export const sendOrderStatusUpdate = async (order, status) => {
   });
 };
 
-export const getCustomerStatusSnapshot = (phone) => {
-  const latestOrder = getLatestOrderByPhone(phone);
+export const getCustomerStatusSnapshot = async (phone) => {
+  const latestOrder = await getLatestOrderByPhone(phone);
 
   if (!latestOrder) {
     return null;
