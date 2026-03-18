@@ -930,7 +930,7 @@ function AdminPage() {
             <div>
               <span className="eyebrow">Dashboard operacional</span>
               <h1 className="admin-store-title">
-                {adminProfile?.store_name || "Turbo Drinks Admin"}
+                {adminProfile?.store_name || "Fortin Delivery Admin"}
               </h1>
               {adminProfile ? (
                 <small>Proprietario: {adminProfile.owner_name}</small>
@@ -960,7 +960,7 @@ function AdminPage() {
             <div>
               <span className="eyebrow">Dashboard operacional</span>
               <h1 className="admin-store-title">
-                {adminProfile?.store_name || "Turbo Drinks Admin"}
+                {adminProfile?.store_name || "Fortin Delivery Admin"}
               </h1>
               {adminProfile ? (
                 <small>Proprietario: {adminProfile.owner_name}</small>
@@ -1418,7 +1418,7 @@ function AdminPage() {
           <div>
             <span className="eyebrow">Dashboard operacional</span>
             <h1 className="admin-store-title">
-              {adminProfile?.store_name || "Turbo Drinks Admin"}
+              {adminProfile?.store_name || "Fortin Delivery Admin"}
             </h1>
             {adminProfile ? (
               <small>Proprietario: {adminProfile.owner_name}</small>

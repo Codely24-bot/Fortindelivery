@@ -11,6 +11,7 @@ import {
   Truck
 } from "lucide-react";
 import { api, socket } from "../api";
+import BrandLogo from "../components/BrandLogo";
 import ProductCard from "../components/ProductCard";
 import CartDrawer from "../components/CartDrawer";
 
@@ -333,13 +334,12 @@ function StorefrontPage() {
     <div className="page-shell storefront">
       <header className="hero-panel">
         <div className="topbar">
-          <Link to="/" className="brand-mark">
-            <span className="brand-icon">TD</span>
-            <div>
-              <strong>{store.settings.storeName}</strong>
-              <small>{store.settings.tagline}</small>
-            </div>
-          </Link>
+          <BrandLogo
+            to="/"
+            subtitle={store.settings.tagline}
+            variant="storefront"
+            className="brand-mark-storefront"
+          />
 
         </div>
 
