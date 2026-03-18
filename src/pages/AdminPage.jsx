@@ -123,6 +123,13 @@ const createPaymentRow = (overrides = {}) => ({
   ...overrides
 });
 
+const createFeeRow = (overrides = {}) => ({
+  id: `fee-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+  name: "",
+  value: "",
+  ...overrides
+});
+
 const formatCurrency = (value) => `R$ ${Number(value || 0).toFixed(2).replace(".", ",")}`;
 const formatDate = (value) => new Date(value).toLocaleString("pt-BR");
 const parseAmount = (value) => {
@@ -512,10 +519,9 @@ function AdminPage() {
       setAdminProfile(profilePayload?.profile || null);
       setAdminConfirmed(Boolean(profilePayload?.confirmed));
       setFeeRows(
-        Object.entries(dashboardPayload.deliveryFees || {}).map(([name, value]) => ({
-          name,
-          value
-        }))
+        Object.entries(dashboardPayload.deliveryFees || {}).map(([name, value]) =>
+          createFeeRow({ name, value: String(value ?? "") })
+        )
       );
     } catch (error) {
       setLoadError(error.message || "Falha ao carregar o painel.");
@@ -1031,7 +1037,9 @@ function AdminPage() {
         api.updateFees(
           token,
           Object.fromEntries(
-            feeRows.filter((row) => row.name.trim()).map((row) => [row.name, Number(row.value || 0)])
+            feeRows
+              .filter((row) => row.name.trim())
+              .map((row) => [row.name.trim(), parseAmount(row.value)])
           )
         ),
       "Taxas atualizadas."
@@ -2343,9 +2351,30 @@ function AdminPage() {
             </div>
             <div className="fee-list">
               {feeRows.map((row, index) => (
-                <div key={`${row.name}-${index}`} className="fee-row">
-                  <input value={row.name} onChange={(event) => setFeeRows((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, name: event.target.value } : entry))} />
-                  <input type="number" step="0.01" value={row.value} onChange={(event) => setFeeRows((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, value: Number(event.target.value) } : entry))} />
+                <div key={row.id} className="fee-row">
+                  <input
+                    value={row.name}
+                    onChange={(event) =>
+                      setFeeRows((current) =>
+                        current.map((entry, entryIndex) =>
+                          entryIndex === index ? { ...entry, name: event.target.value } : entry
+                        )
+                      )
+                    }
+                  />
+                  <input
+                    type="number"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={row.value}
+                    onChange={(event) =>
+                      setFeeRows((current) =>
+                        current.map((entry, entryIndex) =>
+                          entryIndex === index ? { ...entry, value: event.target.value } : entry
+                        )
+                      )
+                    }
+                  />
                 </div>
               ))}
             </div>
