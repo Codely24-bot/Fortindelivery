@@ -175,19 +175,43 @@ const updateDBFile = (mutator) => {
 
 const supabaseUrl =
   (process.env.SUPABASE_URL || "").trim() ||
+  (process.env.VITE_SUPABASE_URL || "").trim() ||
   (process.env.SUPABASE_PROJECT_ID
     ? `https://${process.env.SUPABASE_PROJECT_ID}`.trim() + ".supabase.co"
     : "");
 const supabaseKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+const supabaseConfig = {
+  url: supabaseUrl,
+  hasUrl: Boolean(supabaseUrl),
+  hasServiceRole: Boolean(supabaseKey)
+};
+const supabaseEnabled = Boolean(supabaseConfig.hasUrl && supabaseConfig.hasServiceRole);
+const supabase = supabaseEnabled
+  ? createClient(supabaseUrl, supabaseKey, {
+      auth: { persistSession: false },
+      db: { schema: process.env.SUPABASE_SCHEMA || "public" }
+    })
+  : null;
 
-if (!supabaseUrl || !supabaseKey) {
-  throw new Error("Supabase e obrigatorio. Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY.");
-}
+const getSupabaseStatus = () => {
+  if (supabaseEnabled) {
+    return { enabled: true, mode: "supabase+file-mirror", missing: [] };
+  }
 
-const supabase = createClient(supabaseUrl, supabaseKey, {
-  auth: { persistSession: false },
-  db: { schema: process.env.SUPABASE_SCHEMA || "public" }
-});
+  const missing = [];
+  if (!supabaseConfig.hasUrl) {
+    missing.push("SUPABASE_URL");
+  }
+  if (!supabaseConfig.hasServiceRole) {
+    missing.push("SUPABASE_SERVICE_ROLE_KEY");
+  }
+
+  return {
+    enabled: false,
+    mode: "file-only",
+    missing
+  };
+};
 
 const mapSettingsRow = (row = {}) => ({
   storeName: row.store_name ?? initialData.settings.storeName,
@@ -433,6 +457,10 @@ const mapRiderToRow = (rider) => ({
 });
 
 const ensureSettingsRow = async () => {
+  if (!supabase) {
+    throw new Error("Supabase nao configurado para escrita.");
+  }
+
   const { data, error } = await supabase
     .from("settings")
     .select("*")
@@ -457,6 +485,10 @@ const ensureSettingsRow = async () => {
 };
 
 const readDBSupabase = async () => {
+  if (!supabase) {
+    throw new Error("Supabase nao configurado para leitura.");
+  }
+
   const [
     settingsRes,
     productsRes,
@@ -514,6 +546,10 @@ const readDBSupabase = async () => {
 };
 
 const deleteAll = async (table, column, sentinel) => {
+  if (!supabase) {
+    throw new Error("Supabase nao configurado para escrita.");
+  }
+
   const { error } = await supabase.from(table).delete().neq(column, sentinel);
   if (error) {
     throw new Error(error.message);
@@ -521,6 +557,10 @@ const deleteAll = async (table, column, sentinel) => {
 };
 
 const syncTableById = async (table, rows, idColumn = "id") => {
+  if (!supabase) {
+    throw new Error("Supabase nao configurado para escrita.");
+  }
+
   const normalizedRows = Array.isArray(rows) ? rows : [];
   const desiredIds = normalizedRows.map((row) => row[idColumn]).filter(Boolean);
 
@@ -550,6 +590,10 @@ const syncTableById = async (table, rows, idColumn = "id") => {
 };
 
 const writeDBSupabase = async (data) => {
+  if (!supabase) {
+    throw new Error("Supabase nao configurado para escrita.");
+  }
+
   const payload = normalizeDatabase(data);
   const settingsRow = mapSettingsToRow(payload.settings);
   const productsRows = (payload.products || []).map(mapProductToRow);
@@ -604,7 +648,69 @@ const updateDBSupabase = async (mutator) => {
   return result;
 };
 
+const logSupabaseConfigurationWarning = () => {
+  if (supabaseEnabled) {
+    return;
+  }
+
+  const status = getSupabaseStatus();
+  console.warn(
+    `[storage] Supabase indisponivel. Usando somente arquivo local. Variaveis ausentes: ${status.missing.join(", ")}`
+  );
+};
+
+let bootstrapPromise = null;
+
+export const bootstrapStorage = async () => {
+  if (bootstrapPromise) {
+    return bootstrapPromise;
+  }
+
+  bootstrapPromise = (async () => {
+    ensureDatabase();
+
+    if (!supabaseEnabled) {
+      logSupabaseConfigurationWarning();
+      return { synced: false, mode: "file-only" };
+    }
+
+    const [supabaseResult, fileResult] = await Promise.allSettled([
+      readDBSupabase(),
+      Promise.resolve(readDBFile())
+    ]);
+
+    const supabaseData = supabaseResult.status === "fulfilled" ? supabaseResult.value : null;
+    const fileData = fileResult.status === "fulfilled" ? fileResult.value : null;
+    const preferredData = choosePreferredDatabase(supabaseData, fileData);
+
+    if (!preferredData) {
+      throw supabaseResult.status === "rejected"
+        ? supabaseResult.reason
+        : fileResult.status === "rejected"
+          ? fileResult.reason
+          : new Error("Nao foi possivel inicializar o armazenamento.");
+    }
+
+    writeDBFile(preferredData);
+
+    if (preferredData !== supabaseData) {
+      await writeDBSupabase(preferredData);
+      return { synced: true, mode: "supabase+file-mirror" };
+    }
+
+    return { synced: false, mode: "supabase+file-mirror" };
+  })();
+
+  return bootstrapPromise;
+};
+
 export const readDB = async () => {
+  await bootstrapStorage();
+
+  if (!supabaseEnabled) {
+    return readDBFile();
+  }
+
   const [supabaseResult, fileResult] = await Promise.allSettled([
     readDBSupabase(),
     Promise.resolve(readDBFile())
@@ -627,6 +733,12 @@ let writeQueue = Promise.resolve();
 
 export const updateDB = async (mutator) => {
   const nextWrite = writeQueue.catch(() => undefined).then(async () => {
+    await bootstrapStorage();
+
+    if (!supabaseEnabled) {
+      return updateDBFile(mutator);
+    }
+
     const current = await readDB();
     const draft = deepCopy(current);
     const result = normalizeDatabase(mutator(draft) ?? draft);
@@ -650,18 +762,21 @@ export const createId = (prefix) =>
   `${prefix}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
 export const resetDB = async () => {
-  await writeDBSupabase(initialData);
+  if (supabaseEnabled) {
+    await writeDBSupabase(initialData);
+  }
   writeDBFile(initialData);
 };
 
 export const getDataDir = () => resolvedDataDir;
 export const getStorageMeta = () => ({
-  supabaseStatus: "enabled",
-  mode: "supabase+file-mirror",
+  supabaseStatus: getSupabaseStatus().enabled ? "enabled" : "disabled",
+  mode: getSupabaseStatus().mode,
   dataDir: resolvedDataDir,
   dbPath,
   backupDir,
-  supabaseEnabled: true,
+  supabaseEnabled,
+  missingVariables: getSupabaseStatus().missing,
   localMirrorOk: fs.existsSync(dbPath),
   backupCount: getBackupFiles().length,
   latestBackup: getBackupFiles()[0] || null

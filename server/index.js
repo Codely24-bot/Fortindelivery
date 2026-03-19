@@ -5,7 +5,7 @@ import fs from "node:fs";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { Server } from "socket.io";
-import { createId, getStorageMeta, readDB, updateDB } from "./data/store.js";
+import { bootstrapStorage, createId, getStorageMeta, readDB, updateDB } from "./data/store.js";
 import { buildTrackingUrl, getPublicStoreUrl } from "./services/publicLinks.js";
 import { normalizePhone } from "./services/phone.js";
 import {
@@ -1463,6 +1463,13 @@ if (fs.existsSync(distDir)) {
 }
 
 initializeWhatsAppBot();
+bootstrapStorage()
+  .then((result) => {
+    console.log(`[storage] Inicializado em modo ${result.mode}${result.synced ? " com sincronizacao" : ""}.`);
+  })
+  .catch((error) => {
+    console.error("[storage-bootstrap-error]", error?.message || error);
+  });
 
 server.listen(port, host, () => {
   console.log(`Delivery server running on http://${host}:${port}`);
