@@ -82,6 +82,18 @@ const mapPaymentMethodToRow = (method) => ({
   active: method.active ?? true
 });
 
+const mapDeliveryZoneToRow = (zone, index) => ({
+  id:
+    String(zone.id || "").trim() ||
+    `zone-${index + 1}-${String(zone.name || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "-")}`,
+  name: String(zone.name || "").trim(),
+  fee: Number(zone.fee ?? 0),
+  active: zone.active ?? true
+});
+
 const mapProductToRow = (product) => {
   const now = new Date().toISOString();
   return {
@@ -226,6 +238,21 @@ const mapReceivableToRow = (entry) => {
   };
 };
 
+const mapSupportRequestToRow = (entry) => {
+  const now = new Date().toISOString();
+  return {
+    id: entry.id,
+    customer_name: entry.customerName || "",
+    phone: entry.phone || "",
+    source: entry.source || "whatsapp",
+    status: entry.status || "pending",
+    note: entry.note || "",
+    requested_at: entry.requestedAt || entry.createdAt || now,
+    created_at: entry.createdAt || now,
+    updated_at: entry.updatedAt || entry.createdAt || now
+  };
+};
+
 const mapCashSessionToRow = (session) => ({
   id: session.id,
   opened_at: session.openedAt,
@@ -297,8 +324,14 @@ const migrate = async () => {
   const expensesRows = (payload.expenses || []).map(mapExpenseToRow);
   const categoriesRows = (payload.categories || []).map(mapCategoryToRow);
   const paymentMethodsRows = (payload.paymentMethods || []).map(mapPaymentMethodToRow);
+  const deliveryZonesRows = (
+    payload.deliveryZones?.length
+      ? payload.deliveryZones
+      : Object.entries(payload.settings?.deliveryFees || {}).map(([name, fee]) => ({ name, fee }))
+  ).map(mapDeliveryZoneToRow);
   const payablesRows = (payload.payables || []).map(mapPayableToRow);
   const receivablesRows = (payload.receivables || []).map(mapReceivableToRow);
+  const supportRequestsRows = (payload.supportRequests || []).map(mapSupportRequestToRow);
   const ridersRows = (payload.riders || []).map(mapRiderToRow);
   const cashSessions = [
     ...(payload.cashRegister?.currentSession ? [payload.cashRegister.currentSession] : []),
@@ -319,9 +352,11 @@ const migrate = async () => {
   await deleteAll("promotions", "id", "__never__");
   await deleteAll("categories", "id", "__never__");
   await deleteAll("payment_methods", "value", "__never__");
+  await deleteAll("delivery_zones", "id", "__never__");
   await deleteAll("expenses", "id", "__never__");
   await deleteAll("payables", "id", "__never__");
   await deleteAll("receivables", "id", "__never__");
+  await deleteAll("support_requests", "id", "__never__");
   await deleteAll("cash_movements", "id", "__never__");
   await deleteAll("cash_sessions", "id", "__never__");
   await deleteAll("riders", "id", "__never__");
@@ -347,6 +382,10 @@ const migrate = async () => {
     const { error } = await supabase.from("payment_methods").insert(paymentMethodsRows);
     if (error) throw new Error(error.message);
   }
+  if (deliveryZonesRows.length) {
+    const { error } = await supabase.from("delivery_zones").insert(deliveryZonesRows);
+    if (error) throw new Error(error.message);
+  }
   if (customersRows.length) {
     const { error } = await supabase.from("customers").insert(customersRows);
     if (error) throw new Error(error.message);
@@ -369,6 +408,10 @@ const migrate = async () => {
   }
   if (receivablesRows.length) {
     const { error } = await supabase.from("receivables").insert(receivablesRows);
+    if (error) throw new Error(error.message);
+  }
+  if (supportRequestsRows.length) {
+    const { error } = await supabase.from("support_requests").insert(supportRequestsRows);
     if (error) throw new Error(error.message);
   }
   if (cashSessionsRows.length) {

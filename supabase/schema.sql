@@ -34,6 +34,15 @@ create table if not exists payment_methods (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists delivery_zones (
+  id text primary key,
+  name text not null unique,
+  fee numeric not null default 0,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists products (
   id text primary key,
   name text not null,
@@ -190,6 +199,18 @@ create table if not exists cash_movements (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists support_requests (
+  id text primary key,
+  customer_name text,
+  phone text not null,
+  source text not null default 'whatsapp',
+  status text not null default 'pending',
+  note text,
+  requested_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create index if not exists orders_created_at_idx on orders (created_at desc);
 create index if not exists orders_status_idx on orders (status);
 create index if not exists order_items_order_id_idx on order_items (order_id);
@@ -197,6 +218,8 @@ create index if not exists customers_phone_idx on customers (phone);
 create index if not exists payables_due_date_idx on payables (due_date desc);
 create index if not exists receivables_due_date_idx on receivables (due_date desc);
 create index if not exists cash_movements_session_id_idx on cash_movements (session_id);
+create index if not exists support_requests_status_idx on support_requests (status);
+create index if not exists support_requests_requested_at_idx on support_requests (requested_at desc);
 
 create table if not exists admin_profiles (
   id uuid primary key default gen_random_uuid(),

@@ -181,6 +181,13 @@ const sameDay = (date, compareDate = new Date()) => {
   return left.toDateString() === compareDate.toDateString();
 };
 
+const parseLimit = (value, fallback = 50, max = 500) => {
+  const requested = Number(value || fallback);
+  return Number.isFinite(requested)
+    ? Math.min(Math.max(Math.floor(requested), 1), max)
+    : fallback;
+};
+
 const isWithinDays = (date, days) => {
   const target = new Date(date).getTime();
   const min = Date.now() - days * 24 * 60 * 60 * 1000;
@@ -192,6 +199,7 @@ const getStorePayload = (db) => ({
     ...db.settings,
     publicStoreUrl: getPublicStoreUrl()
   },
+  deliveryZones: db.deliveryZones || [],
   categories: getCatalogCategories(db),
   products: db.products
     .filter((product) => product.active && product.stock > 0)
@@ -208,10 +216,17 @@ const getStorePayload = (db) => ({
 
 const getFeeForNeighborhood = (db, neighborhood) => {
   const normalizedInput = normalizeNeighborhood(neighborhood);
-  const match = Object.entries(db.settings.deliveryFees || {}).find(
+  const zoneMatch = (db.deliveryZones || []).find(
+    (zone) => zone.active !== false && normalizeNeighborhood(zone.name) === normalizedInput
+  );
+  if (zoneMatch) {
+    return Number(zoneMatch.fee || 0);
+  }
+
+  const settingsMatch = Object.entries(db.settings.deliveryFees || {}).find(
     ([name]) => normalizeNeighborhood(name) === normalizedInput
   );
-  return match ? Number(match[1]) : 0;
+  return settingsMatch ? Number(settingsMatch[1]) : 0;
 };
 
 const getSequenceNumber = (orders) => {
@@ -455,6 +470,7 @@ const buildDashboard = (db) => {
     stockSummary,
     cashRegister,
     deliveryFees: db.settings.deliveryFees,
+    deliveryZones: db.deliveryZones || [],
     whatsapp: getWhatsAppStatus()
   };
 };
@@ -1084,7 +1100,14 @@ app.get("/api/admin/debug-token", async (request, response) => {
 
 app.get("/api/admin/dashboard", requireAdmin, async (_request, response) => {
   const db = await readDB();
-  response.json(buildDashboard(db));
+  const dashboard = buildDashboard(db);
+  response.json({
+    ...dashboard,
+    recentOrders: [],
+    customers: [],
+    products: [],
+    promotions: []
+  });
 });
 
 app.get("/api/admin/storage", requireAdmin, async (_request, response) => {
@@ -1102,13 +1125,24 @@ app.get("/api/admin/storage", requireAdmin, async (_request, response) => {
   });
 });
 
-app.get("/api/admin/orders", requireAdmin, async (_request, response) => {
+app.get("/api/admin/orders", requireAdmin, async (request, response) => {
   const db = await readDB();
+  const limit = parseLimit(request.query.limit, 50);
 
   response.json(
     [...db.orders].sort(
       (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
-    )
+    ).slice(0, limit)
+  );
+});
+
+app.get("/api/admin/products", requireAdmin, async (request, response) => {
+  const db = await readDB();
+  const limit = parseLimit(request.query.limit, 50);
+  response.json(
+    [...db.products]
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .slice(0, limit)
   );
 });
 
@@ -1327,9 +1361,10 @@ app.delete("/api/admin/categories/:name", requireAdmin, async (request, response
   }
 });
 
-app.get("/api/admin/promotions", requireAdmin, async (_request, response) => {
+app.get("/api/admin/promotions", requireAdmin, async (request, response) => {
   const db = await readDB();
-  response.json(db.promotions);
+  const limit = parseLimit(request.query.limit, 50);
+  response.json([...db.promotions].slice(0, limit));
 });
 
 app.post("/api/admin/promotions", requireAdmin, async (request, response) => {
@@ -1956,8 +1991,9 @@ app.put("/api/admin/orders/:id/rider", requireAdmin, async (request, response) =
   }
 });
 
-app.get("/api/admin/customers", requireAdmin, async (_request, response) => {
+app.get("/api/admin/customers", requireAdmin, async (request, response) => {
   const db = await readDB();
+  const limit = parseLimit(request.query.limit, 50);
   const customers = db.customers.map((customer) => ({
     ...customer,
     previousOrders: customer.orderIds
@@ -1965,18 +2001,79 @@ app.get("/api/admin/customers", requireAdmin, async (_request, response) => {
       .filter(Boolean)
   }));
 
-  response.json(customers.sort((left, right) => right.totalSpent - left.totalSpent));
+  response.json(customers.sort((left, right) => right.totalSpent - left.totalSpent).slice(0, limit));
+});
+
+const reportsCache = new Map();
+const REPORTS_CACHE_TTL_MS = 15000;
+
+app.post("/api/admin/customers", requireAdmin, async (request, response) => {
+  const payload = request.body || {};
+  const name = String(payload.name || "").trim();
+  const phone = normalizePhone(payload.phone);
+  const address = String(payload.address || "").trim();
+  const neighborhood = String(payload.neighborhood || "").trim();
+  const notes = String(payload.notes || "").trim();
+
+  if (!name || !phone || !address || !neighborhood) {
+    return response.status(400).json({
+      message: "Preencha nome, telefone, endereco e bairro para cadastrar o cliente."
+    });
+  }
+
+  let createdCustomer = null;
+
+  try {
+    await updateDB((draft) => {
+      draft.customers = Array.isArray(draft.customers) ? draft.customers : [];
+
+      if (draft.customers.some((entry) => normalizePhone(entry.phone) === phone)) {
+        throw new Error("Ja existe um cliente cadastrado com esse telefone.");
+      }
+
+      const now = new Date().toISOString();
+      createdCustomer = {
+        id: createId("customer"),
+        name,
+        phone,
+        address,
+        neighborhood,
+        notes,
+        totalSpent: 0,
+        orderIds: [],
+        lastOrderId: null,
+        createdAt: now,
+        updatedAt: now
+      };
+
+      draft.customers.push(createdCustomer);
+      return draft;
+    });
+
+    return response.status(201).json(createdCustomer);
+  } catch (error) {
+    return response.status(400).json({ message: error.message || "Falha ao cadastrar cliente." });
+  }
 });
 
 app.put("/api/admin/settings/fees", requireAdmin, async (request, response) => {
   const fees = request.body.fees || {};
 
   const db = await updateDB((draft) => {
-    draft.settings.deliveryFees = Object.fromEntries(
+    const sanitizedFees = Object.fromEntries(
       Object.entries(fees)
-        .map(([neighborhood, fee]) => [neighborhood, Number(fee)])
+        .map(([neighborhood, fee]) => [String(neighborhood || "").trim(), Number(fee)])
         .filter(([neighborhood]) => neighborhood.trim())
     );
+    draft.settings.deliveryFees = sanitizedFees;
+    draft.deliveryZones = Object.entries(sanitizedFees).map(([name, fee], index) => ({
+      id:
+        draft.deliveryZones?.find((zone) => zone.name === name)?.id ||
+        `zone-${index + 1}-${name.toLowerCase().replace(/\s+/g, "-")}`,
+      name,
+      fee: Number(fee || 0),
+      active: true
+    }));
     return draft;
   });
 
@@ -1986,25 +2083,37 @@ app.put("/api/admin/settings/fees", requireAdmin, async (request, response) => {
 
 app.get("/api/admin/reports", requireAdmin, async (request, response) => {
   const db = await readDB();
-  const dashboard = buildDashboard(db);
   const requestedDays = Number(request.query.days || 7);
   const periodDays = Number.isFinite(requestedDays)
     ? Math.min(Math.max(Math.floor(requestedDays), 1), 60)
     : 7;
+  const cacheKey = `${periodDays}:${db.orders.length}:${db.products.length}:${db.expenses?.length || 0}`;
+  const cached = reportsCache.get(cacheKey);
+
+  if (cached && Date.now() - cached.createdAt < REPORTS_CACHE_TTL_MS) {
+    return response.json(cached.payload);
+  }
+
+  const dashboard = buildDashboard(db);
   const recentOrders = dashboard.recentOrders.filter((order) =>
     isWithinDays(order.createdAt, periodDays)
   );
   const deliveryOrders = recentOrders.filter((order) => order.channel !== "pos");
   const posOrders = recentOrders.filter((order) => order.channel === "pos");
 
-  response.json({
+  const payload = {
     ...dashboard.kpis,
     periodDays,
     topProducts: dashboard.topProducts,
     dailySales: buildDailySeries(recentOrders, periodDays),
     dailySalesDelivery: buildDailySeries(deliveryOrders, periodDays),
     dailySalesPos: buildDailySeries(posOrders, periodDays)
-  });
+  };
+
+  reportsCache.clear();
+  reportsCache.set(cacheKey, { createdAt: Date.now(), payload });
+
+  response.json(payload);
 });
 
 if (fs.existsSync(distDir)) {

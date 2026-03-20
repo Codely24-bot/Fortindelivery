@@ -40,6 +40,13 @@ const mapSettingsRow = (row) => ({
   deliveryFees: row.delivery_fees || {}
 });
 
+const mapDeliveryZoneRow = (row) => ({
+  id: row.id,
+  name: row.name,
+  fee: Number(row.fee ?? 0),
+  active: row.active ?? true
+});
+
 const getPublicStoreUrl = () =>
   import.meta.env.VITE_PUBLIC_STORE_URL || window.location.origin;
 
@@ -63,18 +70,25 @@ const getStoreFromSupabase = async () => {
     return null;
   }
 
-  const [settingsRes, productsRes, promotionsRes] = await Promise.all([
+  const [settingsRes, productsRes, promotionsRes, deliveryZonesRes] = await Promise.all([
     supabase.from("settings").select("*").eq("id", 1).maybeSingle(),
     supabase.from("products").select("*"),
-    supabase.from("promotions").select("*")
+    supabase.from("promotions").select("*"),
+    supabase.from("delivery_zones").select("*")
   ]);
 
-  const error = settingsRes.error || productsRes.error || promotionsRes.error;
+  const error = settingsRes.error || productsRes.error || promotionsRes.error || deliveryZonesRes.error;
   if (error) {
     throw new Error(error.message || "Falha ao carregar dados do Supabase.");
   }
 
-  const settings = settingsRes.data ? mapSettingsRow(settingsRes.data) : {};
+  const deliveryZones = (deliveryZonesRes.data || []).map(mapDeliveryZoneRow);
+  const deliveryFees = deliveryZones.length
+    ? Object.fromEntries(
+        deliveryZones.filter((zone) => zone.active).map((zone) => [zone.name, zone.fee])
+      )
+    : settingsRes.data?.delivery_fees || {};
+  const settings = settingsRes.data ? { ...mapSettingsRow(settingsRes.data), deliveryFees } : {};
   const products = (productsRes.data || [])
     .map((product) => ({
       id: product.id,
@@ -120,6 +134,7 @@ const getStoreFromSupabase = async () => {
       ...settings,
       publicStoreUrl: getPublicStoreUrl()
     },
+    deliveryZones,
     categories,
     products,
     featuredProducts: products.filter((product) => product.featured),
@@ -217,8 +232,12 @@ export const api = {
     request("/api/admin/dashboard", {
       headers: { Authorization: `Bearer ${token}` }
     }),
-  getOrders: (token) =>
-    request("/api/admin/orders", {
+  getOrders: (token, limit) =>
+    request(`/api/admin/orders${limit ? `?limit=${limit}` : ""}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    }),
+  getProducts: (token, limit) =>
+    request(`/api/admin/products${limit ? `?limit=${limit}` : ""}`, {
       headers: { Authorization: `Bearer ${token}` }
     }),
   createPosOrder: (token, body) =>
@@ -278,9 +297,19 @@ export const api = {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` }
     }),
-  getCustomers: (token) =>
-    request("/api/admin/customers", {
+  getPromotions: (token, limit) =>
+    request(`/api/admin/promotions${limit ? `?limit=${limit}` : ""}`, {
       headers: { Authorization: `Bearer ${token}` }
+    }),
+  getCustomers: (token, limit) =>
+    request(`/api/admin/customers${limit ? `?limit=${limit}` : ""}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    }),
+  createCustomer: (token, body) =>
+    request("/api/admin/customers", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body)
     }),
   getCategories: (token) =>
     request("/api/admin/categories", {

@@ -31,6 +31,9 @@ import MetricCard from "../components/MetricCard";
 import { STATUS_STEPS } from "../components/StatusTimeline";
 
 const TOKEN_KEY = "turbo_admin_token";
+const DEFAULT_PAGE_SIZE = 24;
+const DEFAULT_ORDER_LIMIT = 50;
+const DEFAULT_CUSTOMER_LIMIT = 50;
 
 const tabs = [
   { key: "orders", label: "Pedidos", icon: ClipboardList },
@@ -110,6 +113,14 @@ const defaultReceivableForm = {
   dueDate: "",
   note: "",
   status: "pending"
+};
+
+const defaultCustomerForm = {
+  name: "",
+  phone: "",
+  address: "",
+  neighborhood: "",
+  notes: ""
 };
 
 const defaultCashOpenForm = {
@@ -463,7 +474,10 @@ function AdminPage() {
   const [dashboard, setDashboard] = useState(null);
   const [orders, setOrders] = useState([]);
   const [customers, setCustomers] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [promotions, setPromotions] = useState([]);
   const [reports, setReports] = useState(null);
+  const [reportsLoading, setReportsLoading] = useState(false);
   const [adminProfile, setAdminProfile] = useState(null);
   const [adminConfirmed, setAdminConfirmed] = useState(false);
   const [reportsDays, setReportsDays] = useState(7);
@@ -477,6 +491,7 @@ function AdminPage() {
   const [editingPayableId, setEditingPayableId] = useState("");
   const [receivableForm, setReceivableForm] = useState(defaultReceivableForm);
   const [editingReceivableId, setEditingReceivableId] = useState("");
+  const [customerForm, setCustomerForm] = useState(defaultCustomerForm);
   const [cashOpenForm, setCashOpenForm] = useState(defaultCashOpenForm);
   const [cashCloseForm, setCashCloseForm] = useState(defaultCashCloseForm);
   const [cashMovementForm, setCashMovementForm] = useState(defaultCashMovementForm);
@@ -499,6 +514,14 @@ function AdminPage() {
   const [showExpenses, setShowExpenses] = useState(false);
   const [showPayables, setShowPayables] = useState(false);
   const [showReceivables, setShowReceivables] = useState(false);
+  const [orderLimit, setOrderLimit] = useState(DEFAULT_ORDER_LIMIT);
+  const [customerLimit, setCustomerLimit] = useState(DEFAULT_CUSTOMER_LIMIT);
+  const [productLimit, setProductLimit] = useState(DEFAULT_ORDER_LIMIT);
+  const [promotionLimit, setPromotionLimit] = useState(DEFAULT_ORDER_LIMIT);
+  const [visibleOrderCount, setVisibleOrderCount] = useState(DEFAULT_PAGE_SIZE);
+  const [visibleCustomerCount, setVisibleCustomerCount] = useState(DEFAULT_PAGE_SIZE);
+  const [visibleProductCount, setVisibleProductCount] = useState(DEFAULT_PAGE_SIZE);
+  const [visiblePromotionCount, setVisiblePromotionCount] = useState(DEFAULT_PAGE_SIZE);
   const [isRinging, setIsRinging] = useState(false);
   const posPrintedRef = useRef("");
   const soundEnabledRef = useRef(false);
@@ -563,10 +586,18 @@ function AdminPage() {
     }
   };
 
-  const loadData = async (currentToken = token, silent = false) => {
+  const loadData = async (currentToken = token, silent = false, options = {}) => {
     if (!currentToken) {
       return;
     }
+
+    const {
+      includeReports = activeTab === "operations",
+      orderFetchLimit = orderLimit,
+      customerFetchLimit = customerLimit,
+      productFetchLimit = productLimit,
+      promotionFetchLimit = promotionLimit
+    } = options;
 
     if (!silent) {
       setLoading(true);
@@ -575,20 +606,39 @@ function AdminPage() {
     setLoadError("");
 
     try {
-      const [dashboardPayload, ordersPayload, customersPayload, reportsPayload, profilePayload] = await Promise.all([
+      const requests = [
         api.getDashboard(currentToken),
-        api.getOrders(currentToken),
-        api.getCustomers(currentToken),
-        api.getReports(currentToken, reportsDays),
+        api.getOrders(currentToken, orderFetchLimit),
+        api.getCustomers(currentToken, customerFetchLimit),
+        api.getProducts(currentToken, productFetchLimit),
+        api.getPromotions(currentToken, promotionFetchLimit),
         api.getAdminProfile(currentToken)
-      ]);
+      ];
+
+      if (includeReports) {
+        requests.push(api.getReports(currentToken, reportsDays));
+      }
+
+      const [
+        dashboardPayload,
+        ordersPayload,
+        customersPayload,
+        productsPayload,
+        promotionsPayload,
+        profilePayload,
+        reportsPayload
+      ] = await Promise.all(requests);
 
       setDashboard(dashboardPayload);
       setOrders(ordersPayload);
       setCustomers(customersPayload);
-      setReports(reportsPayload);
+      setProducts(productsPayload);
+      setPromotions(promotionsPayload);
       setAdminProfile(profilePayload?.profile || null);
       setAdminConfirmed(Boolean(profilePayload?.confirmed));
+      if (includeReports) {
+        setReports(reportsPayload);
+      }
       setFeeRows(
         Object.entries(dashboardPayload.deliveryFees || {}).map(([name, value]) =>
           createFeeRow({ name, value: String(value ?? "") })
@@ -609,10 +659,13 @@ function AdminPage() {
       return;
     }
     try {
+      setReportsLoading(true);
       const reportsPayload = await api.getReports(currentToken, days);
       setReports(reportsPayload);
     } catch (error) {
       setMessage(error.message);
+    } finally {
+      setReportsLoading(false);
     }
   };
 
@@ -716,18 +769,42 @@ function AdminPage() {
   }, [token]);
 
   useEffect(() => {
+    setVisibleOrderCount(DEFAULT_PAGE_SIZE);
+  }, [orders.length]);
+
+  useEffect(() => {
+    setVisibleCustomerCount(DEFAULT_PAGE_SIZE);
+  }, [customers.length]);
+
+  useEffect(() => {
+    setVisibleProductCount(DEFAULT_PAGE_SIZE);
+  }, [productCatalog.length]);
+
+  useEffect(() => {
+    setVisiblePromotionCount(DEFAULT_PAGE_SIZE);
+  }, [promotionsCatalog.length]);
+
+  useEffect(() => {
     if (!token) {
       return;
     }
-    loadReports(token, reportsDays);
-  }, [reportsDays]);
+    if (activeTab === "operations") {
+      loadReports(token, reportsDays);
+    }
+  }, [reportsDays, activeTab, token]);
+
+  useEffect(() => {
+    if (token && activeTab === "operations" && !reports) {
+      loadReports(token, reportsDays);
+    }
+  }, [activeTab, token, reports, reportsDays]);
 
   const runAction = async (action, successMessage) => {
     setSaving(true);
     setMessage("");
     try {
       await action();
-      await loadData(token);
+      await loadData(token, false, { includeReports: activeTab === "operations" });
       setMessage(successMessage);
       return true;
     } catch (error) {
@@ -736,6 +813,98 @@ function AdminPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const loadMoreOrders = async () => {
+    const nextVisibleCount = visibleOrderCount + DEFAULT_PAGE_SIZE;
+    if (nextVisibleCount <= orders.length) {
+      setVisibleOrderCount(nextVisibleCount);
+      return;
+    }
+
+    const nextLimit = Math.min(orderLimit + DEFAULT_ORDER_LIMIT, 500);
+    if (nextLimit === orderLimit) {
+      setVisibleOrderCount(nextVisibleCount);
+      return;
+    }
+
+    setOrderLimit(nextLimit);
+    await loadData(token, true, {
+      includeReports: activeTab === "operations",
+      orderFetchLimit: nextLimit,
+      customerFetchLimit: customerLimit
+    });
+    setVisibleOrderCount(nextVisibleCount);
+  };
+
+  const loadMoreCustomers = async () => {
+    const nextVisibleCount = visibleCustomerCount + DEFAULT_PAGE_SIZE;
+    if (nextVisibleCount <= customers.length) {
+      setVisibleCustomerCount(nextVisibleCount);
+      return;
+    }
+
+    const nextLimit = Math.min(customerLimit + DEFAULT_CUSTOMER_LIMIT, 500);
+    if (nextLimit === customerLimit) {
+      setVisibleCustomerCount(nextVisibleCount);
+      return;
+    }
+
+    setCustomerLimit(nextLimit);
+    await loadData(token, true, {
+      includeReports: activeTab === "operations",
+      orderFetchLimit: orderLimit,
+      customerFetchLimit: nextLimit
+    });
+    setVisibleCustomerCount(nextVisibleCount);
+  };
+
+  const loadMoreProducts = async () => {
+    const nextVisibleCount = visibleProductCount + DEFAULT_PAGE_SIZE;
+    if (nextVisibleCount <= products.length) {
+      setVisibleProductCount(nextVisibleCount);
+      return;
+    }
+
+    const nextLimit = Math.min(productLimit + DEFAULT_ORDER_LIMIT, 500);
+    if (nextLimit === productLimit) {
+      setVisibleProductCount(nextVisibleCount);
+      return;
+    }
+
+    setProductLimit(nextLimit);
+    await loadData(token, true, {
+      includeReports: activeTab === "operations",
+      orderFetchLimit: orderLimit,
+      customerFetchLimit: customerLimit,
+      productFetchLimit: nextLimit,
+      promotionFetchLimit: promotionLimit
+    });
+    setVisibleProductCount(nextVisibleCount);
+  };
+
+  const loadMorePromotions = async () => {
+    const nextVisibleCount = visiblePromotionCount + DEFAULT_PAGE_SIZE;
+    if (nextVisibleCount <= promotions.length) {
+      setVisiblePromotionCount(nextVisibleCount);
+      return;
+    }
+
+    const nextLimit = Math.min(promotionLimit + DEFAULT_ORDER_LIMIT, 500);
+    if (nextLimit === promotionLimit) {
+      setVisiblePromotionCount(nextVisibleCount);
+      return;
+    }
+
+    setPromotionLimit(nextLimit);
+    await loadData(token, true, {
+      includeReports: activeTab === "operations",
+      orderFetchLimit: orderLimit,
+      customerFetchLimit: customerLimit,
+      productFetchLimit: productLimit,
+      promotionFetchLimit: nextLimit
+    });
+    setVisiblePromotionCount(nextVisibleCount);
   };
 
   const handleLogin = async () => {
@@ -777,7 +946,10 @@ function AdminPage() {
     setDashboard(null);
     setOrders([]);
     setCustomers([]);
+    setProducts([]);
+    setPromotions([]);
     setReports(null);
+    setReportsLoading(false);
     setAdminProfile(null);
     setAdminConfirmed(false);
     setExpenseForm(defaultExpenseForm);
@@ -786,20 +958,48 @@ function AdminPage() {
     setEditingPayableId("");
     setReceivableForm(defaultReceivableForm);
     setEditingReceivableId("");
+    setCustomerForm(defaultCustomerForm);
     setCashOpenForm(defaultCashOpenForm);
     setCashCloseForm(defaultCashCloseForm);
     setCashMovementForm(defaultCashMovementForm);
     setRiderForm(defaultRiderForm);
     setEditingRiderId("");
     setSoundEnabled(false);
+    setOrderLimit(DEFAULT_ORDER_LIMIT);
+    setCustomerLimit(DEFAULT_CUSTOMER_LIMIT);
+    setProductLimit(DEFAULT_ORDER_LIMIT);
+    setPromotionLimit(DEFAULT_ORDER_LIMIT);
+    setVisibleOrderCount(DEFAULT_PAGE_SIZE);
+    setVisibleCustomerCount(DEFAULT_PAGE_SIZE);
+    setVisibleProductCount(DEFAULT_PAGE_SIZE);
+    setVisiblePromotionCount(DEFAULT_PAGE_SIZE);
     setMessage("");
     if (supabase) {
       await supabase.auth.signOut();
     }
   };
 
-  const productCatalog = dashboard?.products ?? [];
-  const promotionsCatalog = dashboard?.promotions ?? [];
+  const productCatalog = products;
+  const promotionsCatalog = promotions;
+  const visibleOrders = orders.slice(0, visibleOrderCount);
+  const visibleCustomers = customers.slice(0, visibleCustomerCount);
+  const visibleProducts = productCatalog.slice(0, visibleProductCount);
+  const visiblePromotions = promotionsCatalog.slice(0, visiblePromotionCount);
+  const reportMetrics = reports ?? {
+    weeklyRevenue: 0,
+    monthlyRevenue: 0,
+    weeklyRevenueDelivery: 0,
+    weeklyRevenuePos: 0,
+    monthlyRevenueDelivery: 0,
+    monthlyRevenuePos: 0,
+    avgTicketDelivery: 0,
+    avgTicketPos: 0,
+    salesTodayDelivery: 0,
+    ordersTodayDelivery: 0,
+    salesTodayPos: 0,
+    ordersTodayPos: 0,
+    topProducts: []
+  };
   const categories = dashboard?.categories?.length
     ? dashboard.categories
     : [...new Set(productCatalog.map((product) => product.category))];
@@ -1211,6 +1411,25 @@ function AdminPage() {
         ),
       "Taxas atualizadas."
     );
+
+  const saveCustomer = async () => {
+    const payload = {
+      name: customerForm.name.trim(),
+      phone: customerForm.phone.trim(),
+      address: customerForm.address.trim(),
+      neighborhood: customerForm.neighborhood.trim(),
+      notes: customerForm.notes.trim()
+    };
+
+    const ok = await runAction(
+      () => api.createCustomer(token, payload),
+      "Cliente cadastrado."
+    );
+
+    if (ok) {
+      setCustomerForm(defaultCustomerForm);
+    }
+  };
 
   const saveExpense = async () => {
     const payload = {
@@ -1955,7 +2174,7 @@ function AdminPage() {
 
       {activeTab === "orders" ? (
         <section className="order-list">
-          {orders.map((order) => (
+          {visibleOrders.map((order) => (
             <article key={order.id} className="admin-card order-card">
               <div className="order-topline">
                 <div>
@@ -2055,6 +2274,11 @@ function AdminPage() {
               </div>
             </article>
           ))}
+          {visibleOrderCount < orders.length || orders.length >= orderLimit ? (
+            <button type="button" className="button button-outline button-block" onClick={loadMoreOrders}>
+              Carregar mais pedidos
+            </button>
+          ) : null}
         </section>
       ) : null}
 
@@ -2557,7 +2781,7 @@ function AdminPage() {
             </button>
           </article>
           <div className="list-column">
-            {dashboard.products.map((product) => (
+            {visibleProducts.map((product) => (
               <article key={product.id} className="admin-card product-admin-card">
                 <img src={product.image} alt={product.name} />
                 <div>
@@ -2574,6 +2798,15 @@ function AdminPage() {
                 </div>
               </article>
             ))}
+            {visibleProductCount < productCatalog.length || productCatalog.length >= productLimit ? (
+              <button
+                type="button"
+                className="button button-outline button-block"
+                onClick={loadMoreProducts}
+              >
+                Carregar mais produtos
+              </button>
+            ) : null}
           </div>
         </section>
       ) : null}
@@ -2619,7 +2852,7 @@ function AdminPage() {
             </button>
           </article>
           <div className="list-column">
-            {dashboard.promotions.map((promotion) => (
+            {visiblePromotions.map((promotion) => (
               <article key={promotion.id} className="admin-card promotion-card">
                 <div>
                   <span className="eyebrow">{promotion.type}</span>
@@ -2632,34 +2865,114 @@ function AdminPage() {
                 </div>
               </article>
             ))}
+            {visiblePromotionCount < promotionsCatalog.length || promotionsCatalog.length >= promotionLimit ? (
+              <button
+                type="button"
+                className="button button-outline button-block"
+                onClick={loadMorePromotions}
+              >
+                Carregar mais promocoes
+              </button>
+            ) : null}
           </div>
         </section>
       ) : null}
 
       {activeTab === "customers" ? (
-        <section className="list-column">
-          {customers.map((customer) => (
-            <article key={customer.id} className="admin-card customer-card">
-              <div className="customer-head">
-                <div>
-                  <span className="eyebrow">Cliente recorrente</span>
-                  <h2>{customer.name}</h2>
+        <section className="admin-grid">
+          <article className="admin-card form-card">
+            <div className="card-header">
+              <div>
+                <span className="eyebrow">Cadastro manual</span>
+                <h2>Novo cliente</h2>
+              </div>
+            </div>
+            <div className="summary-list">
+              <div><span>Clientes cadastrados</span><strong>{customers.length}</strong></div>
+              <div><span>Total acumulado</span><strong>{formatCurrency(customers.reduce((sum, customer) => sum + Number(customer.totalSpent || 0), 0))}</strong></div>
+            </div>
+            <div className="field-grid">
+              <label>
+                Nome
+                <input
+                  value={customerForm.name}
+                  onChange={(event) => setCustomerForm((current) => ({ ...current, name: event.target.value }))}
+                />
+              </label>
+              <label>
+                Telefone
+                <input
+                  value={customerForm.phone}
+                  onChange={(event) => setCustomerForm((current) => ({ ...current, phone: event.target.value }))}
+                />
+              </label>
+              <label>
+                Bairro
+                <input
+                  value={customerForm.neighborhood}
+                  onChange={(event) =>
+                    setCustomerForm((current) => ({ ...current, neighborhood: event.target.value }))
+                  }
+                />
+              </label>
+              <label className="field-span">
+                Endereco
+                <input
+                  value={customerForm.address}
+                  onChange={(event) => setCustomerForm((current) => ({ ...current, address: event.target.value }))}
+                />
+              </label>
+              <label className="field-span">
+                Observacoes
+                <textarea
+                  rows="3"
+                  value={customerForm.notes}
+                  onChange={(event) => setCustomerForm((current) => ({ ...current, notes: event.target.value }))}
+                />
+              </label>
+            </div>
+            <button type="button" className="button button-primary button-block" disabled={saving} onClick={saveCustomer}>
+              {saving ? "Salvando..." : "Cadastrar cliente"}
+            </button>
+          </article>
+          <div className="list-column">
+            {visibleCustomers.map((customer) => (
+              <article key={customer.id} className="admin-card customer-card">
+                <div className="customer-head">
+                  <div>
+                    <span className="eyebrow">
+                      {customer.previousOrders.length ? "Cliente recorrente" : "Cadastro manual"}
+                    </span>
+                    <h2>{customer.name}</h2>
+                  </div>
+                  <strong>{formatCurrency(customer.totalSpent)}</strong>
                 </div>
-                <strong>{formatCurrency(customer.totalSpent)}</strong>
-              </div>
-              <div className="summary-list two-columns">
-                <div><span>Telefone</span><strong>{customer.phone}</strong></div>
-                <div><span>Bairro</span><strong>{customer.neighborhood}</strong></div>
-                <div><span>Endereco</span><strong>{customer.address}</strong></div>
-                <div><span>Pedidos</span><strong>{customer.previousOrders.length}</strong></div>
-              </div>
-            </article>
-          ))}
+                <div className="summary-list two-columns">
+                  <div><span>Telefone</span><strong>{customer.phone}</strong></div>
+                  <div><span>Bairro</span><strong>{customer.neighborhood}</strong></div>
+                  <div><span>Endereco</span><strong>{customer.address}</strong></div>
+                  <div><span>Pedidos</span><strong>{customer.previousOrders.length}</strong></div>
+                </div>
+              </article>
+            ))}
+            {visibleCustomerCount < customers.length || customers.length >= customerLimit ? (
+              <button type="button" className="button button-outline button-block" onClick={loadMoreCustomers}>
+                Carregar mais clientes
+              </button>
+            ) : null}
+          </div>
         </section>
       ) : null}
 
       {activeTab === "operations" ? (
         <section className="admin-grid reports-grid">
+          {reportsLoading || !reports ? (
+            <article className="admin-card">
+              <span className="eyebrow">Relatorios</span>
+              <h2>Carregando indicadores...</h2>
+              <p>Os dados mais pesados desta aba sao carregados sob demanda para deixar o painel mais rapido.</p>
+            </article>
+          ) : null}
           <article className="admin-card">
             <div className="card-header">
               <div>
@@ -2669,18 +2982,18 @@ function AdminPage() {
             </div>
             <div className="summary-list">
               <div><span>Pedidos do dia</span><strong>{dashboard.kpis.ordersToday}</strong></div>
-              <div><span>Faturamento semanal</span><strong>{formatCurrency(reports.weeklyRevenue)}</strong></div>
-              <div><span>Faturamento mensal</span><strong>{formatCurrency(reports.monthlyRevenue)}</strong></div>
+              <div><span>Faturamento semanal</span><strong>{formatCurrency(reportMetrics.weeklyRevenue)}</strong></div>
+              <div><span>Faturamento mensal</span><strong>{formatCurrency(reportMetrics.monthlyRevenue)}</strong></div>
               <div><span>Entregas na rua</span><strong>{deliveryBoard.length}</strong></div>
-              <div><span>Semanal delivery</span><strong>{formatCurrency(reports.weeklyRevenueDelivery)}</strong></div>
-              <div><span>Semanal balcao</span><strong>{formatCurrency(reports.weeklyRevenuePos)}</strong></div>
-              <div><span>Mensal delivery</span><strong>{formatCurrency(reports.monthlyRevenueDelivery)}</strong></div>
-              <div><span>Mensal balcao</span><strong>{formatCurrency(reports.monthlyRevenuePos)}</strong></div>
-              <div><span>Ticket medio delivery</span><strong>{formatCurrency(reports.avgTicketDelivery)}</strong></div>
-              <div><span>Ticket medio balcao</span><strong>{formatCurrency(reports.avgTicketPos)}</strong></div>
+              <div><span>Semanal delivery</span><strong>{formatCurrency(reportMetrics.weeklyRevenueDelivery)}</strong></div>
+              <div><span>Semanal balcao</span><strong>{formatCurrency(reportMetrics.weeklyRevenuePos)}</strong></div>
+              <div><span>Mensal delivery</span><strong>{formatCurrency(reportMetrics.monthlyRevenueDelivery)}</strong></div>
+              <div><span>Mensal balcao</span><strong>{formatCurrency(reportMetrics.monthlyRevenuePos)}</strong></div>
+              <div><span>Ticket medio delivery</span><strong>{formatCurrency(reportMetrics.avgTicketDelivery)}</strong></div>
+              <div><span>Ticket medio balcao</span><strong>{formatCurrency(reportMetrics.avgTicketPos)}</strong></div>
             </div>
             <div className="rank-list">
-              {reports.topProducts.map((product) => (
+              {reportMetrics.topProducts.map((product) => (
                 <div key={product.productId} className="rank-row">
                   <strong>{product.name}</strong>
                   <span>{product.quantity} un. - {formatCurrency(product.revenue)}</span>
@@ -2888,12 +3201,12 @@ function AdminPage() {
                   <MapPinned size={18} />
                   <span className="eyebrow">Delivery</span>
                 </div>
-                <strong>{formatCurrency(reports.salesTodayDelivery)}</strong>
-                <small>{reports.ordersTodayDelivery} pedidos hoje</small>
+                <strong>{formatCurrency(reportMetrics.salesTodayDelivery)}</strong>
+                <small>{reportMetrics.ordersTodayDelivery} pedidos hoje</small>
                 <div className="channel-meta">
-                  <div><span>Semana</span><strong>{formatCurrency(reports.weeklyRevenueDelivery)}</strong></div>
-                  <div><span>Mes</span><strong>{formatCurrency(reports.monthlyRevenueDelivery)}</strong></div>
-                  <div><span>Ticket medio</span><strong>{formatCurrency(reports.avgTicketDelivery)}</strong></div>
+                  <div><span>Semana</span><strong>{formatCurrency(reportMetrics.weeklyRevenueDelivery)}</strong></div>
+                  <div><span>Mes</span><strong>{formatCurrency(reportMetrics.monthlyRevenueDelivery)}</strong></div>
+                  <div><span>Ticket medio</span><strong>{formatCurrency(reportMetrics.avgTicketDelivery)}</strong></div>
                 </div>
               </div>
               <div className="channel-card pos">
@@ -2901,12 +3214,12 @@ function AdminPage() {
                   <ShoppingCart size={18} />
                   <span className="eyebrow">Balcao</span>
                 </div>
-                <strong>{formatCurrency(reports.salesTodayPos)}</strong>
-                <small>{reports.ordersTodayPos} vendas hoje</small>
+                <strong>{formatCurrency(reportMetrics.salesTodayPos)}</strong>
+                <small>{reportMetrics.ordersTodayPos} vendas hoje</small>
                 <div className="channel-meta">
-                  <div><span>Semana</span><strong>{formatCurrency(reports.weeklyRevenuePos)}</strong></div>
-                  <div><span>Mes</span><strong>{formatCurrency(reports.monthlyRevenuePos)}</strong></div>
-                  <div><span>Ticket medio</span><strong>{formatCurrency(reports.avgTicketPos)}</strong></div>
+                  <div><span>Semana</span><strong>{formatCurrency(reportMetrics.weeklyRevenuePos)}</strong></div>
+                  <div><span>Mes</span><strong>{formatCurrency(reportMetrics.monthlyRevenuePos)}</strong></div>
+                  <div><span>Ticket medio</span><strong>{formatCurrency(reportMetrics.avgTicketPos)}</strong></div>
                 </div>
               </div>
             </div>

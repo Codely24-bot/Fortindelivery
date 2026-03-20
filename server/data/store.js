@@ -30,8 +30,9 @@ const getDatabaseCatalogScore = (data) => {
   const promotions = Array.isArray(data.promotions) ? data.promotions.length : 0;
   const customers = Array.isArray(data.customers) ? data.customers.length : 0;
   const orders = Array.isArray(data.orders) ? data.orders.length : 0;
+  const supportRequests = Array.isArray(data.supportRequests) ? data.supportRequests.length : 0;
 
-  return products * 1000 + promotions * 100 + customers * 10 + orders;
+  return products * 1000 + promotions * 100 + customers * 10 + orders + supportRequests;
 };
 
 const getTimestampValue = (value) => {
@@ -59,7 +60,12 @@ const getDatabaseFreshnessScore = (data) => {
     ...(data.customers || []).flatMap((entry) => [entry?.updatedAt, entry?.createdAt]),
     ...(data.orders || []).flatMap((entry) => [entry?.updatedAt, entry?.createdAt]),
     ...(data.expenses || []).flatMap((entry) => [entry?.updatedAt, entry?.createdAt, entry?.date]),
-    ...(data.riders || []).flatMap((entry) => [entry?.updatedAt, entry?.createdAt])
+    ...(data.riders || []).flatMap((entry) => [entry?.updatedAt, entry?.createdAt]),
+    ...(data.supportRequests || []).flatMap((entry) => [
+      entry?.updatedAt,
+      entry?.createdAt,
+      entry?.requestedAt
+    ])
   ].map(getTimestampValue);
 
   return Math.max(settingsTimestamp, ...collectionTimestamps, 0);
@@ -108,6 +114,14 @@ const normalizeSupportRequest = (entry) => ({
   source: String(entry?.source || "whatsapp").trim() || "whatsapp",
   status: String(entry?.status || "pending").trim() || "pending",
   note: String(entry?.note || "").trim()
+});
+const normalizeDeliveryZone = (entry) => ({
+  id: String(entry?.id || "").trim(),
+  name: String(entry?.name || "").trim(),
+  fee: normalizeMoney(entry?.fee),
+  active: entry?.active ?? true,
+  createdAt: entry?.createdAt,
+  updatedAt: entry?.updatedAt
 });
 const normalizeCashMovement = (movement) => ({
   ...movement,
@@ -169,6 +183,10 @@ const normalizeRider = (rider) => ({
 });
 const normalizeDatabase = (data = {}) => ({
   ...data,
+  settings: {
+    ...(data.settings || {}),
+    deliveryFees: data.settings?.deliveryFees || {}
+  },
   categories: Array.isArray(data.categories)
     ? data.categories.map(normalizeCategory).filter(Boolean)
     : [],
@@ -176,6 +194,9 @@ const normalizeDatabase = (data = {}) => ({
     ? data.paymentMethods
         .map(normalizePaymentMethod)
         .filter((method) => method.value && method.label)
+    : [],
+  deliveryZones: Array.isArray(data.deliveryZones)
+    ? data.deliveryZones.map(normalizeDeliveryZone).filter((entry) => entry.name)
     : [],
   expenses: Array.isArray(data.expenses) ? data.expenses.map(normalizeExpense) : [],
   payables: Array.isArray(data.payables) ? data.payables.map(normalizeFinancialEntry) : [],
@@ -188,30 +209,86 @@ const normalizeDatabase = (data = {}) => ({
   products: Array.isArray(data.products) ? data.products.map(normalizeProduct) : []
 });
 
-const mergeLocalOnlyFields = (preferred, localFile) => {
+const mergeFallbackData = (preferred, fallback) => {
   const normalizedPreferred = normalizeDatabase(preferred);
-  const normalizedLocalFile = normalizeDatabase(localFile);
+  const normalizedFallback = normalizeDatabase(fallback);
+  const preferredDeliveryZones = normalizedPreferred.deliveryZones.length
+    ? normalizedPreferred.deliveryZones
+    : normalizedFallback.deliveryZones;
+  const preferredDeliveryFees = preferredDeliveryZones.length
+    ? Object.fromEntries(
+        preferredDeliveryZones.filter((entry) => entry.active).map((entry) => [entry.name, entry.fee])
+      )
+    : normalizedPreferred.settings?.deliveryFees || normalizedFallback.settings?.deliveryFees || {};
 
   return normalizeDatabase({
     ...normalizedPreferred,
-    categories: normalizedLocalFile.categories.length
-      ? normalizedLocalFile.categories
-      : normalizedPreferred.categories,
-    paymentMethods: normalizedLocalFile.paymentMethods.length
-      ? normalizedLocalFile.paymentMethods
-      : normalizedPreferred.paymentMethods,
-    payables: normalizedLocalFile.payables.length
-      ? normalizedLocalFile.payables
-      : normalizedPreferred.payables,
-    receivables: normalizedLocalFile.receivables.length
-      ? normalizedLocalFile.receivables
-      : normalizedPreferred.receivables,
+    settings: {
+      ...(normalizedFallback.settings || {}),
+      ...(normalizedPreferred.settings || {}),
+      deliveryFees: preferredDeliveryFees
+    },
+    categories: normalizedPreferred.categories.length
+      ? normalizedPreferred.categories
+      : normalizedFallback.categories,
+    paymentMethods: normalizedPreferred.paymentMethods.length
+      ? normalizedPreferred.paymentMethods
+      : normalizedFallback.paymentMethods,
+    deliveryZones: preferredDeliveryZones,
+    products: normalizedPreferred.products.length
+      ? normalizedPreferred.products
+      : normalizedFallback.products,
+    promotions: normalizedPreferred.promotions.length
+      ? normalizedPreferred.promotions
+      : normalizedFallback.promotions,
+    customers: normalizedPreferred.customers.length
+      ? normalizedPreferred.customers
+      : normalizedFallback.customers,
+    orders: normalizedPreferred.orders.length ? normalizedPreferred.orders : normalizedFallback.orders,
+    expenses: normalizedPreferred.expenses.length
+      ? normalizedPreferred.expenses
+      : normalizedFallback.expenses,
+    payables: normalizedPreferred.payables.length
+      ? normalizedPreferred.payables
+      : normalizedFallback.payables,
+    receivables: normalizedPreferred.receivables.length
+      ? normalizedPreferred.receivables
+      : normalizedFallback.receivables,
+    supportRequests: normalizedPreferred.supportRequests.length
+      ? normalizedPreferred.supportRequests
+      : normalizedFallback.supportRequests,
+    riders: normalizedPreferred.riders.length ? normalizedPreferred.riders : normalizedFallback.riders,
     cashRegister:
-      normalizedLocalFile.cashRegister?.currentSession ||
-      normalizedLocalFile.cashRegister?.history?.length
-        ? normalizedLocalFile.cashRegister
-        : normalizedPreferred.cashRegister
+      normalizedPreferred.cashRegister?.currentSession ||
+      normalizedPreferred.cashRegister?.history?.length
+        ? normalizedPreferred.cashRegister
+        : normalizedFallback.cashRegister
   });
+};
+
+const hasMeaningfulData = (data) => {
+  if (!data) {
+    return false;
+  }
+
+  const normalizedData = normalizeDatabase(data);
+
+  return Boolean(
+    normalizedData.products.length ||
+      normalizedData.promotions.length ||
+      normalizedData.customers.length ||
+      normalizedData.orders.length ||
+      normalizedData.categories.length ||
+      normalizedData.paymentMethods.length ||
+      normalizedData.deliveryZones.length ||
+      normalizedData.expenses.length ||
+      normalizedData.payables.length ||
+      normalizedData.receivables.length ||
+      normalizedData.supportRequests.length ||
+      normalizedData.riders.length ||
+      normalizedData.cashRegister?.currentSession ||
+      normalizedData.cashRegister?.history?.length
+  );
 };
 
 const writeBackupFile = (data) => {
@@ -374,6 +451,29 @@ const mapPaymentMethodToRow = (method) => ({
   value: String(method.value || "").trim(),
   label: String(method.label || method.value || "").trim(),
   active: method.active ?? true
+});
+
+const mapDeliveryZoneRow = (row) => ({
+  id: row.id,
+  name: row.name,
+  fee: Number(row.fee ?? 0),
+  active: row.active ?? true,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at
+});
+
+const mapDeliveryZoneToRow = (zone, index) => ({
+  id:
+    String(zone.id || "").trim() ||
+    `zone-${index + 1}-${String(zone.name || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "-")}`,
+  name: String(zone.name || "").trim(),
+  fee: Number(zone.fee ?? 0),
+  active: zone.active ?? true,
+  created_at: zone.createdAt,
+  updated_at: zone.updatedAt
 });
 
 const mapProductRow = (row) => ({
@@ -618,6 +718,30 @@ const mapReceivableToRow = (entry) => ({
   updated_at: entry.updatedAt
 });
 
+const mapSupportRequestRow = (row) => ({
+  id: row.id,
+  customerName: row.customer_name || "",
+  phone: row.phone || "",
+  source: row.source || "whatsapp",
+  status: row.status || "pending",
+  note: row.note || "",
+  requestedAt: row.requested_at || row.created_at,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at
+});
+
+const mapSupportRequestToRow = (entry) => ({
+  id: entry.id,
+  customer_name: entry.customerName || "",
+  phone: entry.phone || "",
+  source: entry.source || "whatsapp",
+  status: entry.status || "pending",
+  note: entry.note || "",
+  requested_at: entry.requestedAt || entry.createdAt || new Date().toISOString(),
+  created_at: entry.createdAt || entry.requestedAt || new Date().toISOString(),
+  updated_at: entry.updatedAt || entry.createdAt || entry.requestedAt || new Date().toISOString()
+});
+
 const mapRiderRow = (row) => ({
   id: row.id,
   name: row.name,
@@ -736,10 +860,12 @@ const readDBSupabase = async () => {
     ridersRes,
     categoriesRes,
     paymentMethodsRes,
+    deliveryZonesRes,
     payablesRes,
     receivablesRes,
     cashSessionsRes,
-    cashMovementsRes
+    cashMovementsRes,
+    supportRequestsRes
   ] = await Promise.all([
     ensureSettingsRow().then((data) => ({ data })),
     supabase.from("products").select("*"),
@@ -751,10 +877,12 @@ const readDBSupabase = async () => {
     supabase.from("riders").select("*"),
     supabase.from("categories").select("*"),
     supabase.from("payment_methods").select("*"),
+    supabase.from("delivery_zones").select("*"),
     supabase.from("payables").select("*"),
     supabase.from("receivables").select("*"),
     supabase.from("cash_sessions").select("*"),
-    supabase.from("cash_movements").select("*")
+    supabase.from("cash_movements").select("*"),
+    supabase.from("support_requests").select("*")
   ]);
 
   const errors = [
@@ -767,10 +895,12 @@ const readDBSupabase = async () => {
     ridersRes.error,
     categoriesRes.error,
     paymentMethodsRes.error,
+    deliveryZonesRes.error,
     payablesRes.error,
     receivablesRes.error,
     cashSessionsRes.error,
-    cashMovementsRes.error
+    cashMovementsRes.error,
+    supportRequestsRes.error
   ].filter(Boolean);
 
   if (errors.length) {
@@ -803,6 +933,7 @@ const readDBSupabase = async () => {
     settings: settingsRes.data,
     categories: (categoriesRes.data || []).map((row) => mapCategoryRow(row).name),
     paymentMethods: (paymentMethodsRes.data || []).map(mapPaymentMethodRow),
+    deliveryZones: (deliveryZonesRes.data || []).map(mapDeliveryZoneRow),
     products: (productsRes.data || []).map(mapProductRow),
     promotions: (promotionsRes.data || []).map(mapPromotionRow),
     customers: (customersRes.data || []).map(mapCustomerRow),
@@ -812,6 +943,7 @@ const readDBSupabase = async () => {
     expenses: (expensesRes.data || []).map(mapExpenseRow),
     payables: (payablesRes.data || []).map(mapPayableRow),
     receivables: (receivablesRes.data || []).map(mapReceivableRow),
+    supportRequests: (supportRequestsRes.data || []).map(mapSupportRequestRow),
     riders: (ridersRes.data || []).map(mapRiderRow),
     cashRegister: {
       currentSession,
@@ -880,8 +1012,14 @@ const writeDBSupabase = async (data) => {
   const expensesRows = (payload.expenses || []).map(mapExpenseToRow);
   const categoriesRows = (payload.categories || []).map(mapCategoryToRow);
   const paymentMethodsRows = (payload.paymentMethods || []).map(mapPaymentMethodToRow);
+  const deliveryZonesRows = (
+    payload.deliveryZones?.length
+      ? payload.deliveryZones
+      : Object.entries(payload.settings?.deliveryFees || {}).map(([name, fee]) => ({ name, fee }))
+  ).map(mapDeliveryZoneToRow);
   const payablesRows = (payload.payables || []).map(mapPayableToRow);
   const receivablesRows = (payload.receivables || []).map(mapReceivableToRow);
+  const supportRequestsRows = (payload.supportRequests || []).map(mapSupportRequestToRow);
   const ridersRows = (payload.riders || []).map(mapRiderToRow);
   const cashSessions = [
     ...(payload.cashRegister?.currentSession ? [payload.cashRegister.currentSession] : []),
@@ -908,9 +1046,11 @@ const writeDBSupabase = async (data) => {
   await syncTableById("customers", customersRows);
   await syncTableById("categories", categoriesRows);
   await syncTableById("payment_methods", paymentMethodsRows, "value");
+  await syncTableById("delivery_zones", deliveryZonesRows);
   await syncTableById("expenses", expensesRows);
   await syncTableById("payables", payablesRows);
   await syncTableById("receivables", receivablesRows);
+  await syncTableById("support_requests", supportRequestsRows);
   await syncTableById("riders", ridersRows);
   await syncTableById("cash_sessions", cashSessionsRows);
   await syncTableById("cash_movements", cashMovementsRows);
@@ -976,10 +1116,10 @@ export const bootstrapStorage = async () => {
 
     const supabaseData = supabaseResult.status === "fulfilled" ? supabaseResult.value : null;
     const fileData = fileResult.status === "fulfilled" ? fileResult.value : null;
-    const preferredData = choosePreferredDatabase(supabaseData, fileData);
-    const mergedPreferredData = mergeLocalOnlyFields(preferredData, fileData);
+    const supabaseHasData = hasMeaningfulData(supabaseData);
+    const fileHasData = hasMeaningfulData(fileData);
 
-    if (!preferredData) {
+    if (!supabaseData && !fileData) {
       throw supabaseResult.status === "rejected"
         ? supabaseResult.reason
         : fileResult.status === "rejected"
@@ -987,14 +1127,24 @@ export const bootstrapStorage = async () => {
           : new Error("Nao foi possivel inicializar o armazenamento.");
     }
 
-    writeDBFile(mergedPreferredData);
-
-    if (preferredData !== supabaseData) {
-      await writeDBSupabase(mergedPreferredData);
-      return { synced: true, mode: "supabase+file-mirror" };
+    if (supabaseHasData) {
+      const canonicalData = mergeFallbackData(supabaseData, fileData);
+      writeDBFile(canonicalData);
+      return { synced: false, mode: "supabase+file-mirror" };
     }
 
-    return { synced: false, mode: "supabase+file-mirror" };
+    const bootstrapData = fileHasData ? fileData : initialData;
+    const mergedBootstrapData = mergeFallbackData(bootstrapData, initialData);
+    try {
+      await writeDBSupabase(mergedBootstrapData);
+    } catch (error) {
+      console.error("[storage-bootstrap-sync-error]", error?.message || error);
+      writeDBFile(mergedBootstrapData);
+      return { synced: false, mode: "file-only-fallback" };
+    }
+
+    writeDBFile(mergedBootstrapData);
+    return { synced: true, mode: "supabase+file-mirror" };
   })();
 
   return bootstrapPromise;
@@ -1015,9 +1165,13 @@ export const readDB = async () => {
   const supabaseData = supabaseResult.status === "fulfilled" ? supabaseResult.value : null;
   const fileData = fileResult.status === "fulfilled" ? fileResult.value : null;
 
-  const bestData = choosePreferredDatabase(supabaseData, fileData);
+  if (supabaseData) {
+    return mergeFallbackData(supabaseData, fileData);
+  }
+
+  const bestData = choosePreferredDatabase(fileData, initialData);
   if (bestData) {
-    return mergeLocalOnlyFields(bestData, fileData);
+    return mergeFallbackData(bestData, initialData);
   }
 
   const supabaseError = supabaseResult.status === "rejected" ? supabaseResult.reason : null;
@@ -1058,6 +1212,10 @@ export const createId = (prefix) =>
   `${prefix}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
 export const resetDB = async () => {
+  if (process.env.ALLOW_DB_RESET !== "true") {
+    throw new Error("Reset bloqueado. Defina ALLOW_DB_RESET=true para executar.");
+  }
+
   if (supabaseEnabled) {
     await writeDBSupabase(initialData);
   }
