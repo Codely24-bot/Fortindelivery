@@ -1173,7 +1173,10 @@ export const bootstrapStorage = async () => {
 
     writeDBFile(mergedBootstrapData);
     return { synced: true, mode: "supabase+file-mirror" };
-  })();
+  })().catch((error) => {
+    bootstrapPromise = null;
+    throw error;
+  });
 
   return bootstrapPromise;
 };
