@@ -424,9 +424,9 @@ function AdminPage() {
   const [isRinging, setIsRinging] = useState(false);
   const posPrintedRef = useRef("");
   const soundEnabledRef = useRef(false);
-  const audioContextRef = useRef(null);
   const orderSoundRef = useRef(null);
-  const ringIntervalRef = useRef(null);
+  const previousPendingOrderIdsRef = useRef(null);
+  const ringingOrderIdsRef = useRef([]);
 
   const refreshWhatsAppStatus = async (silent = false) => {
     try {
@@ -446,15 +446,25 @@ function AdminPage() {
     soundEnabledRef.current = soundEnabled;
   }, [soundEnabled]);
 
+  useEffect(() => {
+    const audio = new Audio("/audio/ifood-motoboy.mp3");
+    audio.loop = true;
+    audio.preload = "auto";
+    orderSoundRef.current = audio;
+
+    return () => {
+      audio.pause();
+      audio.currentTime = 0;
+      orderSoundRef.current = null;
+    };
+  }, []);
+
   const stopOrderRing = () => {
-    if (ringIntervalRef.current) {
-      window.clearInterval(ringIntervalRef.current);
-      ringIntervalRef.current = null;
-    }
     if (orderSoundRef.current) {
       orderSoundRef.current.pause();
       orderSoundRef.current.currentTime = 0;
     }
+    ringingOrderIdsRef.current = [];
     setIsRinging(false);
   };
 
@@ -470,23 +480,6 @@ function AdminPage() {
         setIsRinging(true);
         return;
       }
-      const AudioContextRef = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContextRef) {
-        return;
-      }
-      const context = audioContextRef.current || new AudioContextRef();
-      audioContextRef.current = context;
-      if (context.state === "suspended") {
-        await context.resume();
-      }
-      const oscillator = context.createOscillator();
-      const gain = context.createGain();
-      gain.gain.value = 0.08;
-      oscillator.type = "triangle";
-      oscillator.frequency.value = 880;
-      oscillator.connect(gain).connect(context.destination);
-      oscillator.start();
-      oscillator.stop(context.currentTime + 0.2);
     } catch (error) {
       setMessage("Nao foi possivel tocar o som. Verifique permissao do navegador.");
     }
@@ -585,6 +578,9 @@ function AdminPage() {
 
   useEffect(() => {
     if (!token) {
+      previousPendingOrderIdsRef.current = null;
+      ringingOrderIdsRef.current = [];
+      stopOrderRing();
       return undefined;
     }
 
@@ -726,7 +722,6 @@ function AdminPage() {
   const pendingDeliveryOrders = orders.filter(
     (order) => order.channel !== "pos" && order.status === "received"
   );
-  const hasPendingDeliveryOrders = pendingDeliveryOrders.length > 0;
   const expenses = dashboard?.expenses ?? [];
   const expensesTotal = expenses.reduce(
     (sum, expense) => sum + parseAmount(expense.amount),
@@ -782,21 +777,31 @@ function AdminPage() {
       return undefined;
     }
 
-    if (hasPendingDeliveryOrders) {
+    const pendingIds = pendingDeliveryOrders.map((order) => order.id);
+    const previousIds = previousPendingOrderIdsRef.current;
+
+    if (!previousIds) {
+      previousPendingOrderIdsRef.current = pendingIds;
+      return undefined;
+    }
+
+    const newPendingIds = pendingIds.filter((id) => !previousIds.includes(id));
+    if (newPendingIds.length) {
+      ringingOrderIdsRef.current = [...new Set([...ringingOrderIdsRef.current, ...newPendingIds])];
       playOrderSound();
-      if (!ringIntervalRef.current) {
-        ringIntervalRef.current = window.setInterval(() => {
-          playOrderSound();
-        }, 5000);
-      }
-    } else {
+    }
+
+    const hasActiveRingingOrder = ringingOrderIdsRef.current.some((id) => pendingIds.includes(id));
+    if (!hasActiveRingingOrder) {
       stopOrderRing();
     }
 
+    previousPendingOrderIdsRef.current = pendingIds;
+
     return () => {
-      stopOrderRing();
+      previousPendingOrderIdsRef.current = pendingIds;
     };
-  }, [soundEnabled, hasPendingDeliveryOrders]);
+  }, [soundEnabled, pendingDeliveryOrders]);
   const productsById = productCatalog.reduce((accumulator, product) => {
     accumulator[product.id] = product;
     return accumulator;
@@ -1644,7 +1649,28 @@ function AdminPage() {
                     key={step.key}
                     className={`button button-status ${order.status === step.key ? "is-current" : ""}`}
                     disabled={saving || order.status === step.key}
-                    onClick={() => runAction(() => api.updateOrderStatus(token, order.id, step.key), "Status atualizado e cliente notificado.")}
+                    onClick={async () => {
+                      if (step.key === "accepted") {
+                        const previousRingingOrderIds = [...ringingOrderIdsRef.current];
+                        ringingOrderIdsRef.current = ringingOrderIdsRef.current.filter(
+                          (ringingOrderId) => ringingOrderId !== order.id
+                        );
+                        stopOrderRing();
+                        const success = await runAction(
+                          () => api.updateOrderStatus(token, order.id, step.key),
+                          "Status atualizado e cliente notificado."
+                        );
+                        if (!success) {
+                          ringingOrderIdsRef.current = previousRingingOrderIds;
+                          playOrderSound();
+                        }
+                        return;
+                      }
+                      await runAction(
+                        () => api.updateOrderStatus(token, order.id, step.key),
+                        "Status atualizado e cliente notificado."
+                      );
+                    }}
                   >
                     {step.label}
                   </button>
