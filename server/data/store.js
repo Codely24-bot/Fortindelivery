@@ -177,6 +177,31 @@ const normalizeExpense = (expense) => ({
   ...expense,
   amount: normalizeMoney(expense?.amount)
 });
+const normalizePromotion = (promotion) => ({
+  ...promotion,
+  discountValue: normalizeMoney(promotion?.discountValue),
+  minimumOrder: normalizeMoney(promotion?.minimumOrder)
+});
+const normalizeCustomer = (customer) => ({
+  ...customer,
+  totalSpent: normalizeMoney(customer?.totalSpent),
+  orderIds: Array.isArray(customer?.orderIds) ? customer.orderIds : []
+});
+const normalizeOrderItem = (item) => ({
+  ...item,
+  unitPrice: normalizeMoney(item?.unitPrice),
+  lineTotal: normalizeMoney(item?.lineTotal),
+  quantity: Number(item?.quantity || 0)
+});
+const normalizeOrder = (order) => ({
+  ...order,
+  subtotal: normalizeMoney(order?.subtotal),
+  deliveryFee: normalizeMoney(order?.deliveryFee),
+  discount: normalizeMoney(order?.discount),
+  total: normalizeMoney(order?.total),
+  items: Array.isArray(order?.items) ? order.items.map(normalizeOrderItem) : [],
+  statusTimeline: Array.isArray(order?.statusTimeline) ? order.statusTimeline : []
+});
 const normalizeRider = (rider) => ({
   ...rider,
   active: rider?.active ?? true
@@ -198,6 +223,9 @@ const normalizeDatabase = (data = {}) => ({
   deliveryZones: Array.isArray(data.deliveryZones)
     ? data.deliveryZones.map(normalizeDeliveryZone).filter((entry) => entry.name)
     : [],
+  promotions: Array.isArray(data.promotions) ? data.promotions.map(normalizePromotion) : [],
+  customers: Array.isArray(data.customers) ? data.customers.map(normalizeCustomer) : [],
+  orders: Array.isArray(data.orders) ? data.orders.map(normalizeOrder) : [],
   expenses: Array.isArray(data.expenses) ? data.expenses.map(normalizeExpense) : [],
   payables: Array.isArray(data.payables) ? data.payables.map(normalizeFinancialEntry) : [],
   receivables: Array.isArray(data.receivables) ? data.receivables.map(normalizeFinancialEntry) : [],
