@@ -10,7 +10,7 @@ function BrandLogo({
     <>
       <img
         className={`brand-logo-image is-${variant}`}
-        src="/IMG_3265.PNG"
+        src="/fortin-delivery-logo.svg"
         alt="Fortin Delivery"
       />
       {subtitle ? <small className={`brand-logo-subtitle is-${variant}`}>{subtitle}</small> : null}
