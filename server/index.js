@@ -11,6 +11,7 @@ import {
   getStorageMeta,
   getStorageRevision,
   readDB,
+  updateProductsDB,
   updateDB
 } from "./data/store.js";
 import { buildTrackingUrl, getPublicStoreUrl } from "./services/publicLinks.js";
@@ -1292,7 +1293,7 @@ app.post("/api/admin/products", requireAdmin, asyncHandler(async (request, respo
   }
 
   let createdProduct = null;
-  const db = await updateDB((draft) => {
+  const db = await updateProductsDB((draft) => {
     const salePrice = resolveSalePrice(payload);
     const category = String(payload.category || "").trim();
 
@@ -1316,6 +1317,8 @@ app.post("/api/admin/products", requireAdmin, asyncHandler(async (request, respo
     });
     draft.products.push(createdProduct);
     return draft;
+  }, {
+    resolveProduct: () => createdProduct
   });
 
   io.emit("catalog:updated", getStorePayload(db));
@@ -1331,7 +1334,7 @@ app.put("/api/admin/products/:id", requireAdmin, async (request, response) => {
   }
 
   try {
-    const db = await updateDB((draft) => {
+    const db = await updateProductsDB((draft) => {
       const product = draft.products.find((entry) => entry.id === request.params.id);
 
       if (!product) {
@@ -1363,6 +1366,8 @@ app.put("/api/admin/products/:id", requireAdmin, async (request, response) => {
 
       updatedProduct = product;
       return draft;
+    }, {
+      resolveProduct: () => updatedProduct
     });
 
     io.emit("catalog:updated", getStorePayload(db));
@@ -1373,9 +1378,12 @@ app.put("/api/admin/products/:id", requireAdmin, async (request, response) => {
 });
 
 app.delete("/api/admin/products/:id", requireAdmin, asyncHandler(async (request, response) => {
-  const db = await updateDB((draft) => {
+  const db = await updateProductsDB((draft) => {
     draft.products = draft.products.filter((entry) => entry.id !== request.params.id);
     return draft;
+  }, {
+    mode: "delete",
+    productId: request.params.id
   });
 
   io.emit("catalog:updated", getStorePayload(db));
@@ -1386,7 +1394,7 @@ app.patch("/api/admin/products/:id/toggle", requireAdmin, async (request, respon
   let updatedProduct = null;
 
   try {
-    const db = await updateDB((draft) => {
+    const db = await updateProductsDB((draft) => {
       const product = draft.products.find((entry) => entry.id === request.params.id);
 
       if (!product) {
@@ -1396,6 +1404,9 @@ app.patch("/api/admin/products/:id/toggle", requireAdmin, async (request, respon
       product.active = !product.active;
       updatedProduct = product;
       return draft;
+    }, {
+      mode: "toggle",
+      productId: request.params.id
     });
 
     io.emit("catalog:updated", getStorePayload(db));

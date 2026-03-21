@@ -1317,8 +1317,69 @@ export const readDB = async () => {
 
 let writeQueue = Promise.resolve();
 
+const queueStorageWrite = async (handler) => {
+  const nextWrite = writeQueue.catch(() => undefined).then(handler);
+  writeQueue = nextWrite.catch(() => undefined);
+  return nextWrite;
+};
+
+const finalizeStorageWrite = (result) => {
+  lastStorageSyncError = "";
+  writeDBFile(result);
+  primeReadCache(result);
+  return result;
+};
+
+const runProductUpsertRpc = async (product) => {
+  if (!supabase) {
+    throw new Error("Supabase nao configurado para escrita.");
+  }
+
+  const payload = {
+    id: product.id,
+    name: product.name,
+    category: product.category,
+    volume: product.volume || "",
+    salePrice: Number(product.salePrice ?? product.price ?? 0),
+    purchasePrice: Number(product.purchasePrice ?? 0),
+    stock: Number(product.stock ?? 0),
+    active: product.active ?? true,
+    featured: product.featured ?? false,
+    badge: product.badge || "",
+    description: product.description || "",
+    image: product.image || ""
+  };
+
+  const { error } = await supabase.rpc("admin_upsert_product", { payload });
+  if (error) {
+    throw new Error(error.message);
+  }
+};
+
+const runProductDeleteRpc = async (productId) => {
+  if (!supabase) {
+    throw new Error("Supabase nao configurado para escrita.");
+  }
+
+  const { error } = await supabase.rpc("admin_delete_product", { product_id: productId });
+  if (error) {
+    throw new Error(error.message);
+  }
+};
+
+const runProductToggleRpc = async (productId) => {
+  if (!supabase) {
+    throw new Error("Supabase nao configurado para escrita.");
+  }
+
+  const { error } = await supabase.rpc("admin_toggle_product", { product_id: productId });
+  if (error) {
+    throw new Error(error.message);
+  }
+};
+
 export const updateDB = async (mutator) => {
-  const nextWrite = writeQueue.catch(() => undefined).then(async () => {
+  return queueStorageWrite(async () => {
     await bootstrapStorage();
     clearReadCache();
 
@@ -1334,9 +1395,7 @@ export const updateDB = async (mutator) => {
 
     try {
       await writeDBSupabase(result);
-      lastStorageSyncError = "";
-      writeDBFile(result);
-      primeReadCache(result);
+      finalizeStorageWrite(result);
     } catch (error) {
       lastStorageSyncError = error?.message || String(error);
       console.error("[storage-sync-error]", lastStorageSyncError);
@@ -1345,10 +1404,46 @@ export const updateDB = async (mutator) => {
 
     return result;
   });
-
-  writeQueue = nextWrite.catch(() => undefined);
-  return nextWrite;
 };
+
+export const updateProductsDB = async (mutator, options = {}) =>
+  queueStorageWrite(async () => {
+    await bootstrapStorage();
+    clearReadCache();
+
+    if (!supabaseEnabled) {
+      const result = updateDBFile(mutator);
+      primeReadCache(result);
+      return result;
+    }
+
+    const current = await readDB();
+    const draft = deepCopy(current);
+    const result = normalizeDatabase(mutator(draft) ?? draft);
+
+    try {
+      const resolvedProduct =
+        typeof options.resolveProduct === "function" ? options.resolveProduct(result) : options.product;
+
+      if (options.mode === "delete" && options.productId) {
+        await runProductDeleteRpc(options.productId);
+      } else if (options.mode === "toggle" && options.productId) {
+        await runProductToggleRpc(options.productId);
+      } else if (resolvedProduct) {
+        await runProductUpsertRpc(resolvedProduct);
+      } else {
+        throw new Error("Mutacao de produto invalida.");
+      }
+
+      finalizeStorageWrite(result);
+    } catch (error) {
+      lastStorageSyncError = error?.message || String(error);
+      console.error("[product-storage-sync-error]", lastStorageSyncError);
+      throw error;
+    }
+
+    return result;
+  });
 
 export const createId = (prefix) =>
   `${prefix}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
