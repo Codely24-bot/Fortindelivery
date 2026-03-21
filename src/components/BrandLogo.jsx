@@ -1,5 +1,7 @@
 import { Link } from "react-router-dom";
 
+const logoSrc = "/FORTIN%20SVG.svg";
+
 function BrandLogo({
   to = "/",
   subtitle = "",
@@ -10,7 +12,7 @@ function BrandLogo({
     <>
       <img
         className={`brand-logo-image is-${variant}`}
-        src="/fortin-delivery-logo.svg"
+        src={logoSrc}
         alt="Fortin Delivery"
       />
       {subtitle ? <small className={`brand-logo-subtitle is-${variant}`}>{subtitle}</small> : null}
