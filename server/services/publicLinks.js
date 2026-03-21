@@ -6,7 +6,7 @@ export const getPublicStoreUrl = () =>
       process.env.STORE_URL ||
       (process.env.RAILWAY_PUBLIC_DOMAIN
         ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
-        : "http://localhost:5173")
+        : "https://fortindelivery.up.railway.app")
   );
 
 export const buildTrackingUrl = (orderId) => `${getPublicStoreUrl()}/pedido/${orderId}`;
