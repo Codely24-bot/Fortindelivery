@@ -5,7 +5,14 @@ import fs from "node:fs";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { Server } from "socket.io";
-import { bootstrapStorage, createId, getStorageMeta, readDB, updateDB } from "./data/store.js";
+import {
+  bootstrapStorage,
+  createId,
+  getStorageMeta,
+  getStorageRevision,
+  readDB,
+  updateDB
+} from "./data/store.js";
 import { buildTrackingUrl, getPublicStoreUrl } from "./services/publicLinks.js";
 import { normalizePhone } from "./services/phone.js";
 import {
@@ -56,6 +63,26 @@ const io = new Server(server, {
     origin: "*"
   }
 });
+
+const responseCache = new Map();
+const RESPONSE_CACHE_TTL_MS = 15000;
+
+const getCachedResponse = async (cacheKey, producer) => {
+  const revision = getStorageRevision();
+  const scopedKey = `${revision}:${cacheKey}`;
+  const cached = responseCache.get(scopedKey);
+
+  if (cached && Date.now() - cached.createdAt < RESPONSE_CACHE_TTL_MS) {
+    return cached.payload;
+  }
+
+  const payload = await producer();
+  responseCache.set(scopedKey, {
+    createdAt: Date.now(),
+    payload
+  });
+  return payload;
+};
 
 app.use(cors());
 app.use(express.json({ limit: "6mb" }));
@@ -618,8 +645,11 @@ app.get("/api/whatsapp/qr.png", (_request, response) => {
 });
 
 app.get("/api/store", asyncHandler(async (_request, response) => {
-  const db = await readDB();
-  response.json(getStorePayload(db));
+  const payload = await getCachedResponse("store", async () => {
+    const db = await readDB();
+    return getStorePayload(db);
+  });
+  response.json(payload);
 }));
 
 app.post("/api/customers/lookup", asyncHandler(async (request, response) => {
@@ -1159,8 +1189,10 @@ app.get("/api/admin/debug-token", async (request, response) => {
 });
 
 app.get("/api/admin/dashboard", requireAdmin, async (_request, response) => {
-  const db = await readDB();
-  const dashboard = buildDashboard(db);
+  const dashboard = await getCachedResponse("admin-dashboard", async () => {
+    const db = await readDB();
+    return buildDashboard(db);
+  });
   response.json({
     ...dashboard,
     recentOrders: [],
@@ -1186,24 +1218,26 @@ app.get("/api/admin/storage", requireAdmin, async (_request, response) => {
 });
 
 app.get("/api/admin/orders", requireAdmin, async (request, response) => {
-  const db = await readDB();
   const limit = parseLimit(request.query.limit, 50);
+  const payload = await getCachedResponse(`admin-orders:${limit}`, async () => {
+    const db = await readDB();
+    return [...db.orders]
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+      .slice(0, limit);
+  });
 
-  response.json(
-    [...db.orders].sort(
-      (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
-    ).slice(0, limit)
-  );
+  response.json(payload);
 });
 
 app.get("/api/admin/products", requireAdmin, async (request, response) => {
-  const db = await readDB();
   const limit = parseLimit(request.query.limit, 50);
-  response.json(
-    [...db.products]
+  const payload = await getCachedResponse(`admin-products:${limit}`, async () => {
+    const db = await readDB();
+    return [...db.products]
       .sort((left, right) => left.name.localeCompare(right.name))
-      .slice(0, limit)
-  );
+      .slice(0, limit);
+  });
+  response.json(payload);
 });
 
 app.patch("/api/admin/orders/:id/status", requireAdmin, async (request, response) => {
@@ -1244,11 +1278,6 @@ app.patch("/api/admin/orders/:id/status", requireAdmin, async (request, response
       message: error.message || "Falha ao atualizar o status."
     });
   }
-});
-
-app.get("/api/admin/products", requireAdmin, async (_request, response) => {
-  const db = await readDB();
-  response.json(db.products);
 });
 
 app.post("/api/admin/products", requireAdmin, asyncHandler(async (request, response) => {
@@ -1422,9 +1451,12 @@ app.delete("/api/admin/categories/:name", requireAdmin, async (request, response
 });
 
 app.get("/api/admin/promotions", requireAdmin, async (request, response) => {
-  const db = await readDB();
   const limit = parseLimit(request.query.limit, 50);
-  response.json([...db.promotions].slice(0, limit));
+  const payload = await getCachedResponse(`admin-promotions:${limit}`, async () => {
+    const db = await readDB();
+    return [...db.promotions].slice(0, limit);
+  });
+  response.json(payload);
 });
 
 app.post("/api/admin/promotions", requireAdmin, asyncHandler(async (request, response) => {
@@ -2052,16 +2084,21 @@ app.put("/api/admin/orders/:id/rider", requireAdmin, async (request, response) =
 });
 
 app.get("/api/admin/customers", requireAdmin, async (request, response) => {
-  const db = await readDB();
   const limit = parseLimit(request.query.limit, 50);
-  const customers = db.customers.map((customer) => ({
-    ...customer,
-    previousOrders: customer.orderIds
-      .map((orderId) => db.orders.find((order) => order.id === orderId))
-      .filter(Boolean)
-  }));
+  const payload = await getCachedResponse(`admin-customers:${limit}`, async () => {
+    const db = await readDB();
+    const ordersById = new Map((db.orders || []).map((order) => [order.id, order]));
+    const customers = db.customers.map((customer) => ({
+      ...customer,
+      previousOrders: customer.orderIds.map((orderId) => ordersById.get(orderId)).filter(Boolean)
+    }));
 
-  response.json(customers.sort((left, right) => right.totalSpent - left.totalSpent).slice(0, limit));
+    return customers
+      .sort((left, right) => right.totalSpent - left.totalSpent)
+      .slice(0, limit);
+  });
+
+  response.json(payload);
 });
 
 const reportsCache = new Map();
@@ -2142,18 +2179,18 @@ app.put("/api/admin/settings/fees", requireAdmin, asyncHandler(async (request, r
 }));
 
 app.get("/api/admin/reports", requireAdmin, async (request, response) => {
-  const db = await readDB();
   const requestedDays = Number(request.query.days || 7);
   const periodDays = Number.isFinite(requestedDays)
     ? Math.min(Math.max(Math.floor(requestedDays), 1), 60)
     : 7;
-  const cacheKey = `${periodDays}:${db.orders.length}:${db.products.length}:${db.expenses?.length || 0}`;
+  const cacheKey = `${getStorageRevision()}:${periodDays}`;
   const cached = reportsCache.get(cacheKey);
 
   if (cached && Date.now() - cached.createdAt < REPORTS_CACHE_TTL_MS) {
     return response.json(cached.payload);
   }
 
+  const db = await readDB();
   const dashboard = buildDashboard(db);
   const recentOrders = dashboard.recentOrders.filter((order) =>
     isWithinDays(order.createdAt, periodDays)

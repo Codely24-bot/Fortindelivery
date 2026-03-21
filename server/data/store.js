@@ -1160,6 +1160,33 @@ const logSupabaseConfigurationWarning = () => {
 
 let bootstrapPromise = null;
 let lastStorageSyncError = "";
+let storageRevision = 0;
+let readCache = {
+  revision: 0,
+  createdAt: 0,
+  data: null
+};
+const READ_CACHE_TTL_MS = Math.max(
+  Number(process.env.READ_DB_CACHE_TTL_MS || 1500),
+  0
+);
+
+const clearReadCache = () => {
+  readCache = {
+    revision: storageRevision,
+    createdAt: 0,
+    data: null
+  };
+};
+
+const primeReadCache = (data) => {
+  storageRevision += 1;
+  readCache = {
+    revision: storageRevision,
+    createdAt: Date.now(),
+    data: deepCopy(data)
+  };
+};
 
 export const bootstrapStorage = async () => {
   if (bootstrapPromise) {
@@ -1171,6 +1198,7 @@ export const bootstrapStorage = async () => {
 
     if (!supabaseEnabled) {
       logSupabaseConfigurationWarning();
+      primeReadCache(readDBFile());
       return { synced: false, mode: "file-only" };
     }
 
@@ -1195,6 +1223,7 @@ export const bootstrapStorage = async () => {
     if (supabaseHasData) {
       const canonicalData = mergeFallbackData(supabaseData, fileData);
       writeDBFile(canonicalData);
+      primeReadCache(canonicalData);
       return { synced: false, mode: getSupabaseStatus().mode };
     }
 
@@ -1211,11 +1240,13 @@ export const bootstrapStorage = async () => {
       }
 
       writeDBFile(mergedBootstrapData);
+      primeReadCache(mergedBootstrapData);
       return { synced: false, mode: "file-only-fallback" };
     }
 
     lastStorageSyncError = "";
     writeDBFile(mergedBootstrapData);
+    primeReadCache(mergedBootstrapData);
     return { synced: true, mode: getSupabaseStatus().mode };
   })().catch((error) => {
     bootstrapPromise = null;
@@ -1228,8 +1259,19 @@ export const bootstrapStorage = async () => {
 export const readDB = async () => {
   await bootstrapStorage();
 
+  const cacheAge = Date.now() - readCache.createdAt;
+  if (readCache.data && readCache.revision === storageRevision && cacheAge <= READ_CACHE_TTL_MS) {
+    return deepCopy(readCache.data);
+  }
+
   if (!supabaseEnabled) {
-    return readDBFile();
+    const fileData = readDBFile();
+    readCache = {
+      revision: storageRevision,
+      createdAt: Date.now(),
+      data: deepCopy(fileData)
+    };
+    return fileData;
   }
 
   const [supabaseResult, fileResult] = await Promise.allSettled([
@@ -1242,7 +1284,13 @@ export const readDB = async () => {
 
   if (supabaseData) {
     lastStorageSyncError = "";
-    return mergeFallbackData(supabaseData, fileData);
+    const mergedData = mergeFallbackData(supabaseData, fileData);
+    readCache = {
+      revision: storageRevision,
+      createdAt: Date.now(),
+      data: deepCopy(mergedData)
+    };
+    return mergedData;
   }
 
   const supabaseError = supabaseResult.status === "rejected" ? supabaseResult.reason : null;
@@ -1254,7 +1302,13 @@ export const readDB = async () => {
 
   const bestData = choosePreferredDatabase(fileData, initialData);
   if (bestData) {
-    return mergeFallbackData(bestData, initialData);
+    const mergedData = mergeFallbackData(bestData, initialData);
+    readCache = {
+      revision: storageRevision,
+      createdAt: Date.now(),
+      data: deepCopy(mergedData)
+    };
+    return mergedData;
   }
 
   const fileError = fileResult.status === "rejected" ? fileResult.reason : null;
@@ -1266,9 +1320,12 @@ let writeQueue = Promise.resolve();
 export const updateDB = async (mutator) => {
   const nextWrite = writeQueue.catch(() => undefined).then(async () => {
     await bootstrapStorage();
+    clearReadCache();
 
     if (!supabaseEnabled) {
-      return updateDBFile(mutator);
+      const result = updateDBFile(mutator);
+      primeReadCache(result);
+      return result;
     }
 
     const current = await readDB();
@@ -1279,6 +1336,7 @@ export const updateDB = async (mutator) => {
       await writeDBSupabase(result);
       lastStorageSyncError = "";
       writeDBFile(result);
+      primeReadCache(result);
     } catch (error) {
       lastStorageSyncError = error?.message || String(error);
       console.error("[storage-sync-error]", lastStorageSyncError);
@@ -1307,6 +1365,7 @@ export const resetDB = async () => {
 };
 
 export const getDataDir = () => resolvedDataDir;
+export const getStorageRevision = () => storageRevision;
 export const getStorageMeta = () => ({
   supabaseStatus: getSupabaseStatus().enabled ? "enabled" : "disabled",
   mode: getSupabaseStatus().mode,
@@ -1317,6 +1376,7 @@ export const getStorageMeta = () => ({
   supabaseEnabled,
   missingVariables: getSupabaseStatus().missing,
   lastStorageSyncError,
+  storageRevision,
   localMirrorOk: fs.existsSync(dbPath),
   backupCount: getBackupFiles().length,
   latestBackup: getBackupFiles()[0] || null

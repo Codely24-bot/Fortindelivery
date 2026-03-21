@@ -44,6 +44,23 @@ const tabs = [
   { key: "operations", label: "Operacao", icon: ChartColumn }
 ];
 
+const TAB_RESOURCES = {
+  orders: ["orders"],
+  pos: ["products", "promotions"],
+  products: ["products"],
+  promotions: ["promotions"],
+  customers: ["customers"],
+  operations: []
+};
+
+const createLoadedResourcesState = () => ({
+  orders: false,
+  customers: false,
+  products: false,
+  promotions: false,
+  reports: false
+});
+
 const imageByCategory = {
   Cervejas: "/products/beer.svg",
   Refrigerantes: "/products/soda.svg",
@@ -529,11 +546,21 @@ function AdminPage() {
   const [visibleProductCount, setVisibleProductCount] = useState(DEFAULT_PAGE_SIZE);
   const [visiblePromotionCount, setVisiblePromotionCount] = useState(DEFAULT_PAGE_SIZE);
   const [isRinging, setIsRinging] = useState(false);
+  const [loadedResources, setLoadedResources] = useState(createLoadedResourcesState);
   const posPrintedRef = useRef("");
   const soundEnabledRef = useRef(false);
   const orderSoundRef = useRef(null);
   const previousPendingOrderIdsRef = useRef(null);
   const ringingOrderIdsRef = useRef([]);
+  const bootstrappedRef = useRef(false);
+  const activeTabRef = useRef(activeTab);
+  const orderLimitRef = useRef(orderLimit);
+  const customerLimitRef = useRef(customerLimit);
+  const productLimitRef = useRef(productLimit);
+  const promotionLimitRef = useRef(promotionLimit);
+  const reportsDaysRef = useRef(reportsDays);
+
+  const getResourcesForTab = (tab = activeTab) => TAB_RESOURCES[tab] || [];
 
   const refreshWhatsAppStatus = async (silent = false) => {
     try {
@@ -552,6 +579,30 @@ function AdminPage() {
   useEffect(() => {
     soundEnabledRef.current = soundEnabled;
   }, [soundEnabled]);
+
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
+  useEffect(() => {
+    orderLimitRef.current = orderLimit;
+  }, [orderLimit]);
+
+  useEffect(() => {
+    customerLimitRef.current = customerLimit;
+  }, [customerLimit]);
+
+  useEffect(() => {
+    productLimitRef.current = productLimit;
+  }, [productLimit]);
+
+  useEffect(() => {
+    promotionLimitRef.current = promotionLimit;
+  }, [promotionLimit]);
+
+  useEffect(() => {
+    reportsDaysRef.current = reportsDays;
+  }, [reportsDays]);
 
   useEffect(() => {
     const audio = new Audio("/audio/ifood-motoboy.mp3");
@@ -598,7 +649,10 @@ function AdminPage() {
     }
 
     const {
+      resources = getResourcesForTab(activeTab),
+      includeBase = true,
       includeReports = activeTab === "operations",
+      reportsPeriodDays = reportsDays,
       orderFetchLimit = orderLimit,
       customerFetchLimit = customerLimit,
       productFetchLimit = productLimit,
@@ -612,17 +666,30 @@ function AdminPage() {
     setLoadError("");
 
     try {
-      const requestEntries = [
-        ["dashboard", api.getDashboard(currentToken)],
-        ["orders", api.getOrders(currentToken, orderFetchLimit)],
-        ["customers", api.getCustomers(currentToken, customerFetchLimit)],
-        ["products", api.getProducts(currentToken, productFetchLimit)],
-        ["promotions", api.getPromotions(currentToken, promotionFetchLimit)],
-        ["profile", api.getAdminProfile(currentToken)]
-      ];
+      const requestEntries = [];
+
+      if (includeBase) {
+        requestEntries.push(
+          ["dashboard", api.getDashboard(currentToken)],
+          ["profile", api.getAdminProfile(currentToken)]
+        );
+      }
+
+      if (resources.includes("orders")) {
+        requestEntries.push(["orders", api.getOrders(currentToken, orderFetchLimit)]);
+      }
+      if (resources.includes("customers")) {
+        requestEntries.push(["customers", api.getCustomers(currentToken, customerFetchLimit)]);
+      }
+      if (resources.includes("products")) {
+        requestEntries.push(["products", api.getProducts(currentToken, productFetchLimit)]);
+      }
+      if (resources.includes("promotions")) {
+        requestEntries.push(["promotions", api.getPromotions(currentToken, promotionFetchLimit)]);
+      }
 
       if (includeReports) {
-        requestEntries.push(["reports", api.getReports(currentToken, reportsDays)]);
+        requestEntries.push(["reports", api.getReports(currentToken, reportsPeriodDays)]);
       }
 
       const settled = await Promise.allSettled(requestEntries.map(([, promise]) => promise));
@@ -672,6 +739,14 @@ function AdminPage() {
       if (includeReports && payloads.reports) {
         setReports(payloads.reports);
       }
+      setLoadedResources((current) => ({
+        ...current,
+        ...(payloads.orders ? { orders: true } : {}),
+        ...(payloads.customers ? { customers: true } : {}),
+        ...(payloads.products ? { products: true } : {}),
+        ...(payloads.promotions ? { promotions: true } : {}),
+        ...(includeReports && payloads.reports ? { reports: true } : {})
+      }));
 
       if (failedMessages.length) {
         setMessage(`Alguns dados do painel nao carregaram: ${failedMessages[0]}`);
@@ -741,6 +816,8 @@ function AdminPage() {
 
   useEffect(() => {
     if (!token) {
+      bootstrappedRef.current = false;
+      setLoadedResources(createLoadedResourcesState());
       previousPendingOrderIdsRef.current = null;
       ringingOrderIdsRef.current = [];
       stopOrderRing();
@@ -751,7 +828,11 @@ function AdminPage() {
 
     const boot = async () => {
       try {
-        await loadData(token);
+        await loadData(token, false, {
+          resources: getResourcesForTab(activeTab),
+          includeReports: activeTab === "operations"
+        });
+        bootstrappedRef.current = true;
       } catch (error) {
         if (!mounted) {
           return;
@@ -773,7 +854,16 @@ function AdminPage() {
         return;
       }
       try {
-        await loadData(token, true);
+        const currentTab = activeTabRef.current;
+        await loadData(token, true, {
+          resources: getResourcesForTab(currentTab),
+          includeReports: currentTab === "operations",
+          reportsPeriodDays: reportsDaysRef.current,
+          orderFetchLimit: orderLimitRef.current,
+          customerFetchLimit: customerLimitRef.current,
+          productFetchLimit: productLimitRef.current,
+          promotionFetchLimit: promotionLimitRef.current
+        });
       } catch (error) {
         if (mounted) {
           setMessage(error.message);
@@ -799,6 +889,27 @@ function AdminPage() {
       window.clearInterval(whatsappInterval);
     };
   }, [token]);
+
+  useEffect(() => {
+    if (!token || !bootstrappedRef.current) {
+      return;
+    }
+
+    const resources = getResourcesForTab(activeTab);
+    const shouldLoadResources = resources.some((resource) => !loadedResources[resource]);
+    const shouldLoadReports = activeTab === "operations" && !loadedResources.reports;
+
+    if (!shouldLoadResources && !shouldLoadReports) {
+      return;
+    }
+
+    loadData(token, false, {
+      resources,
+      includeReports: activeTab === "operations"
+    }).catch((error) => {
+      setMessage(error.message);
+    });
+  }, [activeTab, loadedResources, token]);
 
   useEffect(() => {
     setVisibleOrderCount(DEFAULT_PAGE_SIZE);
@@ -862,9 +973,9 @@ function AdminPage() {
 
     setOrderLimit(nextLimit);
     await loadData(token, true, {
-      includeReports: activeTab === "operations",
-      orderFetchLimit: nextLimit,
-      customerFetchLimit: customerLimit
+      includeBase: false,
+      resources: ["orders"],
+      orderFetchLimit: nextLimit
     });
     setVisibleOrderCount(nextVisibleCount);
   };
@@ -884,8 +995,8 @@ function AdminPage() {
 
     setCustomerLimit(nextLimit);
     await loadData(token, true, {
-      includeReports: activeTab === "operations",
-      orderFetchLimit: orderLimit,
+      includeBase: false,
+      resources: ["customers"],
       customerFetchLimit: nextLimit
     });
     setVisibleCustomerCount(nextVisibleCount);
@@ -906,11 +1017,9 @@ function AdminPage() {
 
     setProductLimit(nextLimit);
     await loadData(token, true, {
-      includeReports: activeTab === "operations",
-      orderFetchLimit: orderLimit,
-      customerFetchLimit: customerLimit,
-      productFetchLimit: nextLimit,
-      promotionFetchLimit: promotionLimit
+      includeBase: false,
+      resources: ["products"],
+      productFetchLimit: nextLimit
     });
     setVisibleProductCount(nextVisibleCount);
   };
@@ -930,10 +1039,8 @@ function AdminPage() {
 
     setPromotionLimit(nextLimit);
     await loadData(token, true, {
-      includeReports: activeTab === "operations",
-      orderFetchLimit: orderLimit,
-      customerFetchLimit: customerLimit,
-      productFetchLimit: productLimit,
+      includeBase: false,
+      resources: ["promotions"],
       promotionFetchLimit: nextLimit
     });
     setVisiblePromotionCount(nextVisibleCount);
