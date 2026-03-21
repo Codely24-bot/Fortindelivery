@@ -1797,13 +1797,21 @@ input,
 select,
 textarea {
   border-color: rgba(138, 3, 3, 0.34);
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--text);
+  background: #111111;
+  color: #ffffff;
+  color-scheme: dark;
 }
 
 input::placeholder,
 textarea::placeholder {
   color: rgba(255, 255, 255, 0.72);
+}
+
+select,
+select option,
+select optgroup {
+  background: #111111;
+  color: #ffffff;
 }
 
 input:focus,
@@ -2178,6 +2186,16 @@ textarea:focus {
 
 .admin .form-card select,
 .admin .form-card option {
+  color: #ffffff;
+  background: #111111;
+}
+
+.admin select,
+.admin option,
+.admin optgroup,
+.pos-grid select,
+.pos-grid option,
+.pos-grid optgroup {
   color: #ffffff;
   background: #111111;
 }
