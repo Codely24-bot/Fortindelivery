@@ -19,6 +19,15 @@ const CART_KEY = "turbo_cart";
 const CUSTOMER_KEY = "turbo_customer";
 const LAST_ORDER_KEY = "turbo_last_order";
 const STORE_CACHE_KEY = "turbo_store_cache";
+const fallbackImageByCategory = {
+  Cervejas: "/products/beer.svg",
+  Refrigerantes: "/products/soda.svg",
+  Energeticos: "/products/energy.svg",
+  Aguas: "/products/water.svg",
+  Sucos: "/products/juice.svg",
+  Destilados: "/products/spirit.svg",
+  "Combos e promocoes": "/products/combo.svg"
+};
 
 const emptyForm = {
   name: "",
@@ -49,6 +58,10 @@ const sanitizeStoredCart = (value) =>
     .filter((item) => item.id && Number.isFinite(item.quantity) && item.quantity > 0);
 
 const formatCurrency = (value) => `R$ ${Number(value || 0).toFixed(2).replace(".", ",")}`;
+const getProductImage = (product) =>
+  String(product?.image || "").trim() ||
+  fallbackImageByCategory[String(product?.category || "").trim()] ||
+  "/products/combo.svg";
 const normalizeProduct = (product) => {
   const salePrice = Number(product?.salePrice ?? product?.price ?? 0);
   const originalPrice = Number(
@@ -57,6 +70,7 @@ const normalizeProduct = (product) => {
 
   return {
     ...product,
+    image: getProductImage(product),
     price: salePrice,
     originalPrice
   };
@@ -72,6 +86,33 @@ const normalizeStore = (payload) => {
     products: (payload.products || []).map(normalizeProduct),
     featuredProducts: (payload.featuredProducts || []).map(normalizeProduct)
   };
+};
+const createCacheableStore = (payload) => {
+  if (!payload) {
+    return payload;
+  }
+
+  const trimProductImage = (product) => ({
+    ...product,
+    image: String(product?.image || "").startsWith("data:image/") ? "" : getProductImage(product)
+  });
+
+  return {
+    ...payload,
+    products: (payload.products || []).map(trimProductImage),
+    featuredProducts: (payload.featuredProducts || []).map(trimProductImage)
+  };
+};
+const persistStoreCache = (payload) => {
+  try {
+    localStorage.setItem(STORE_CACHE_KEY, JSON.stringify(payload));
+  } catch {
+    try {
+      localStorage.setItem(STORE_CACHE_KEY, JSON.stringify(createCacheableStore(payload)));
+    } catch {
+      localStorage.removeItem(STORE_CACHE_KEY);
+    }
+  }
 };
 const getCachedStore = () =>
   normalizeStore(
@@ -145,7 +186,7 @@ function StorefrontPage() {
         const payload = await api.getStore();
         const normalizedStore = normalizeStore(payload);
         setStore(normalizedStore);
-        localStorage.setItem(STORE_CACHE_KEY, JSON.stringify(normalizedStore));
+        persistStoreCache(normalizedStore);
       } catch (error) {
         setFeedback(error.message);
       } finally {
@@ -159,7 +200,7 @@ function StorefrontPage() {
       if (payload?.products) {
         const normalizedStore = normalizeStore(payload);
         setStore(normalizedStore);
-        localStorage.setItem(STORE_CACHE_KEY, JSON.stringify(normalizedStore));
+        persistStoreCache(normalizedStore);
       } else {
         loadStore();
       }
