@@ -179,6 +179,10 @@ const normalizeCashRegister = (cashRegister) => ({
     ? cashRegister.history.map(normalizeCashSession)
     : []
 });
+const createTimestamp = () => new Date().toISOString();
+const resolveCreatedAt = (value) => value || createTimestamp();
+const resolveUpdatedAt = (updatedAt, createdAt) =>
+  updatedAt || createdAt || createTimestamp();
 const normalizeProduct = (product) => {
   const salePrice = normalizeMoney(product.salePrice ?? product.price);
   const legacyOriginalPrice = Number(product.originalPrice);
@@ -476,8 +480,8 @@ const mapSettingsToRow = (settings = {}) => ({
   support_text: settings.supportText || "",
   delivery_fees: settings.deliveryFees || {},
   stock_low_threshold: Number(settings.stockLowThreshold ?? 5),
-  created_at: settings.createdAt,
-  updated_at: settings.updatedAt
+  created_at: resolveCreatedAt(settings.createdAt),
+  updated_at: resolveUpdatedAt(settings.updatedAt, settings.createdAt)
 });
 
 const mapCategoryRow = (row) => ({
@@ -492,7 +496,9 @@ const mapCategoryToRow = (category, index) => ({
     .trim()
     .toLowerCase()
     .replace(/\s+/g, "-")}`,
-  name: String(category || "").trim()
+  name: String(category || "").trim(),
+  created_at: createTimestamp(),
+  updated_at: createTimestamp()
 });
 
 const mapPaymentMethodRow = (row) => ({
@@ -506,7 +512,9 @@ const mapPaymentMethodRow = (row) => ({
 const mapPaymentMethodToRow = (method) => ({
   value: String(method.value || "").trim(),
   label: String(method.label || method.value || "").trim(),
-  active: method.active ?? true
+  active: method.active ?? true,
+  created_at: resolveCreatedAt(method.createdAt),
+  updated_at: resolveUpdatedAt(method.updatedAt, method.createdAt)
 });
 
 const mapDeliveryZoneRow = (row) => ({
@@ -528,8 +536,8 @@ const mapDeliveryZoneToRow = (zone, index) => ({
   name: String(zone.name || "").trim(),
   fee: Number(zone.fee ?? 0),
   active: zone.active ?? true,
-  created_at: zone.createdAt,
-  updated_at: zone.updatedAt
+  created_at: resolveCreatedAt(zone.createdAt),
+  updated_at: resolveUpdatedAt(zone.updatedAt, zone.createdAt)
 });
 
 const mapProductRow = (row) => ({
@@ -560,8 +568,8 @@ const mapProductToRow = (product) => ({
   badge: product.badge || "",
   description: product.description || "",
   image: product.image || "",
-  created_at: product.createdAt,
-  updated_at: product.updatedAt
+  created_at: resolveCreatedAt(product.createdAt),
+  updated_at: resolveUpdatedAt(product.updatedAt, product.createdAt)
 });
 
 const mapPromotionRow = (row) => ({
@@ -590,8 +598,8 @@ const mapPromotionToRow = (promo) => ({
   neighborhood: promo.neighborhood || "",
   active: promo.active ?? true,
   highlight: promo.highlight || "",
-  created_at: promo.createdAt,
-  updated_at: promo.updatedAt
+  created_at: resolveCreatedAt(promo.createdAt),
+  updated_at: resolveUpdatedAt(promo.updatedAt, promo.createdAt)
 });
 
 const mapCustomerRow = (row) => ({
@@ -618,8 +626,8 @@ const mapCustomerToRow = (customer) => ({
   total_spent: Number(customer.totalSpent ?? 0),
   order_ids: customer.orderIds || [],
   last_order_id: customer.lastOrderId || null,
-  created_at: customer.createdAt,
-  updated_at: customer.updatedAt
+  created_at: resolveCreatedAt(customer.createdAt),
+  updated_at: resolveUpdatedAt(customer.updatedAt, customer.createdAt)
 });
 
 const mapOrderRow = (row, items = []) => ({
@@ -655,8 +663,8 @@ const mapOrderRow = (row, items = []) => ({
 const mapOrderToRow = (order) => ({
   id: order.id,
   number: order.number,
-  created_at: order.createdAt,
-  updated_at: order.updatedAt,
+  created_at: resolveCreatedAt(order.createdAt),
+  updated_at: resolveUpdatedAt(order.updatedAt, order.createdAt),
   channel: order.channel || "delivery",
   customer_id: order.customerId || null,
   rider_id: order.riderId || null,
@@ -716,10 +724,10 @@ const mapExpenseToRow = (expense) => ({
   title: expense.title,
   category: expense.category || "",
   amount: Number(expense.amount ?? 0),
-  date: expense.date || expense.createdAt,
+  date: expense.date || expense.createdAt || createTimestamp(),
   note: expense.note || "",
-  created_at: expense.createdAt,
-  updated_at: expense.updatedAt
+  created_at: resolveCreatedAt(expense.createdAt),
+  updated_at: resolveUpdatedAt(expense.updatedAt, expense.createdAt)
 });
 
 const mapPayableRow = (row) => ({
@@ -739,11 +747,11 @@ const mapPayableToRow = (entry) => ({
   title: entry.title,
   category: entry.category || "",
   amount: Number(entry.amount ?? 0),
-  due_date: entry.dueDate || entry.createdAt,
+  due_date: entry.dueDate || entry.createdAt || createTimestamp(),
   note: entry.note || "",
   status: entry.status || "pending",
-  created_at: entry.createdAt,
-  updated_at: entry.updatedAt
+  created_at: resolveCreatedAt(entry.createdAt),
+  updated_at: resolveUpdatedAt(entry.updatedAt, entry.createdAt)
 });
 
 const mapReceivableRow = (row) => ({
@@ -767,11 +775,11 @@ const mapReceivableToRow = (entry) => ({
   customer_phone: entry.customerPhone || "",
   category: entry.category || "",
   amount: Number(entry.amount ?? 0),
-  due_date: entry.dueDate || entry.createdAt,
+  due_date: entry.dueDate || entry.createdAt || createTimestamp(),
   note: entry.note || "",
   status: entry.status || "pending",
-  created_at: entry.createdAt,
-  updated_at: entry.updatedAt
+  created_at: resolveCreatedAt(entry.createdAt),
+  updated_at: resolveUpdatedAt(entry.updatedAt, entry.createdAt)
 });
 
 const mapSupportRequestRow = (row) => ({
@@ -793,9 +801,9 @@ const mapSupportRequestToRow = (entry) => ({
   source: entry.source || "whatsapp",
   status: entry.status || "pending",
   note: entry.note || "",
-  requested_at: entry.requestedAt || entry.createdAt || new Date().toISOString(),
-  created_at: entry.createdAt || entry.requestedAt || new Date().toISOString(),
-  updated_at: entry.updatedAt || entry.createdAt || entry.requestedAt || new Date().toISOString()
+  requested_at: entry.requestedAt || entry.createdAt || createTimestamp(),
+  created_at: resolveCreatedAt(entry.createdAt || entry.requestedAt),
+  updated_at: resolveUpdatedAt(entry.updatedAt, entry.createdAt || entry.requestedAt)
 });
 
 const mapRiderRow = (row) => ({
@@ -812,8 +820,8 @@ const mapRiderToRow = (rider) => ({
   name: rider.name,
   phone: rider.phone || "",
   active: rider.active ?? true,
-  created_at: rider.createdAt,
-  updated_at: rider.updatedAt
+  created_at: resolveCreatedAt(rider.createdAt),
+  updated_at: resolveUpdatedAt(rider.updatedAt, rider.createdAt)
 });
 
 const mapCashSessionRow = (row) => ({
@@ -848,8 +856,8 @@ const mapCashSessionToRow = (session) => ({
       ? null
       : Number(session.difference),
   note: session.note || "",
-  created_at: session.createdAt || session.openedAt,
-  updated_at: session.updatedAt || session.closedAt || session.openedAt
+  created_at: resolveCreatedAt(session.createdAt || session.openedAt),
+  updated_at: resolveUpdatedAt(session.updatedAt || session.closedAt, session.createdAt || session.openedAt)
 });
 
 const mapCashMovementRow = (row) => ({
@@ -868,8 +876,8 @@ const mapCashMovementToRow = (movement, sessionId) => ({
   type: movement.type || "",
   amount: Number(movement.amount ?? 0),
   note: movement.note || "",
-  created_at: movement.createdAt,
-  updated_at: movement.updatedAt || movement.createdAt
+  created_at: resolveCreatedAt(movement.createdAt),
+  updated_at: resolveUpdatedAt(movement.updatedAt, movement.createdAt)
 });
 
 const ensureSettingsRow = async () => {
