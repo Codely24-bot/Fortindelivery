@@ -11,7 +11,6 @@ import {
   MapPinned,
   MessageCircle,
   Package,
-  Percent,
   Wallet,
   RefreshCcw,
   QrCode,
@@ -33,16 +32,12 @@ const DEFAULT_CUSTOMER_LIMIT = 50;
 const tabs = [
   { key: "orders", label: "Pedidos", icon: ClipboardList },
   { key: "products", label: "Produtos", icon: Package },
-  { key: "promotions", label: "Promocoes", icon: Percent },
-  { key: "customers", label: "Clientes", icon: Users },
   { key: "operations", label: "Operacao", icon: ChartColumn }
 ];
 
 const TAB_RESOURCES = {
   orders: ["orders"],
   products: ["products"],
-  promotions: ["promotions"],
-  customers: ["customers"],
   operations: ["products"]
 };
 
@@ -2356,159 +2351,6 @@ function AdminPage() {
                 onClick={loadMoreProducts}
               >
                 Carregar mais produtos
-              </button>
-            ) : null}
-          </div>
-        </section>
-      ) : null}
-
-      {activeTab === "promotions" ? (
-        <section className="admin-grid">
-          <article className="admin-card form-card">
-            <div className="card-header">
-              <div>
-                <span className="eyebrow">Campanhas</span>
-                <h2>{editingPromotionId ? "Editar promocao" : "Nova promocao"}</h2>
-              </div>
-            </div>
-            <div className="field-grid">
-              <label>
-                Tipo
-                <select value={promotionForm.type} onChange={(event) => setPromotionForm((current) => ({ ...current, type: event.target.value }))}>
-                  <option value="daily">Promocao do dia</option>
-                  <option value="shipping">Frete gratis</option>
-                  <option value="coupon">Cupom</option>
-                  <option value="combo">Combo</option>
-                </select>
-              </label>
-              <label>
-                Titulo
-                <input value={promotionForm.title} onChange={(event) => setPromotionForm((current) => ({ ...current, title: event.target.value }))} />
-              </label>
-              <label className="field-span">
-                Descricao
-                <textarea rows="3" value={promotionForm.description} onChange={(event) => setPromotionForm((current) => ({ ...current, description: event.target.value }))} />
-              </label>
-              <label>
-                Codigo
-                <input value={promotionForm.code} onChange={(event) => setPromotionForm((current) => ({ ...current, code: event.target.value.toUpperCase() }))} />
-              </label>
-              <label>
-                Valor
-                <input type="number" step="0.01" value={promotionForm.discountValue} onChange={(event) => setPromotionForm((current) => ({ ...current, discountValue: Number(event.target.value) }))} />
-              </label>
-            </div>
-            <button type="button" className="button button-primary button-block" disabled={saving} onClick={savePromotion}>
-              {saving ? "Salvando..." : editingPromotionId ? "Atualizar promocao" : "Criar promocao"}
-            </button>
-          </article>
-          <div className="list-column">
-            {visiblePromotions.map((promotion) => (
-              <article key={promotion.id} className="admin-card promotion-card">
-                <div>
-                  <span className="eyebrow">{promotion.type}</span>
-                  <strong>{promotion.title}</strong>
-                  <p>{promotion.description}</p>
-                </div>
-                <div className="card-actions">
-                  <button type="button" className="button button-soft" onClick={() => { setActiveTab("promotions"); setEditingPromotionId(promotion.id); setPromotionForm({ ...promotion }); }}>Editar</button>
-                  <button type="button" className="button button-muted" onClick={() => runAction(() => api.deletePromotion(token, promotion.id), "Promocao removida.")}>Excluir</button>
-                </div>
-              </article>
-            ))}
-            {visiblePromotionCount < promotionsCatalog.length || promotionsCatalog.length >= promotionLimit ? (
-              <button
-                type="button"
-                className="button button-outline button-block"
-                onClick={loadMorePromotions}
-              >
-                Carregar mais promocoes
-              </button>
-            ) : null}
-          </div>
-        </section>
-      ) : null}
-
-      {activeTab === "customers" ? (
-        <section className="admin-grid">
-          <article className="admin-card form-card">
-            <div className="card-header">
-              <div>
-                <span className="eyebrow">Cadastro manual</span>
-                <h2>Novo cliente</h2>
-              </div>
-            </div>
-            <div className="summary-list">
-              <div><span>Clientes cadastrados</span><strong>{customers.length}</strong></div>
-              <div><span>Total acumulado</span><strong>{formatCurrency(customers.reduce((sum, customer) => sum + Number(customer.totalSpent || 0), 0))}</strong></div>
-            </div>
-            <div className="field-grid">
-              <label>
-                Nome
-                <input
-                  value={customerForm.name}
-                  onChange={(event) => setCustomerForm((current) => ({ ...current, name: event.target.value }))}
-                />
-              </label>
-              <label>
-                Telefone
-                <input
-                  value={customerForm.phone}
-                  onChange={(event) => setCustomerForm((current) => ({ ...current, phone: event.target.value }))}
-                />
-              </label>
-              <label>
-                Bairro
-                <input
-                  value={customerForm.neighborhood}
-                  onChange={(event) =>
-                    setCustomerForm((current) => ({ ...current, neighborhood: event.target.value }))
-                  }
-                />
-              </label>
-              <label className="field-span">
-                Endereco
-                <input
-                  value={customerForm.address}
-                  onChange={(event) => setCustomerForm((current) => ({ ...current, address: event.target.value }))}
-                />
-              </label>
-              <label className="field-span">
-                Observacoes
-                <textarea
-                  rows="3"
-                  value={customerForm.notes}
-                  onChange={(event) => setCustomerForm((current) => ({ ...current, notes: event.target.value }))}
-                />
-              </label>
-            </div>
-            <button type="button" className="button button-primary button-block" disabled={saving} onClick={saveCustomer}>
-              {saving ? "Salvando..." : "Cadastrar cliente"}
-            </button>
-          </article>
-          <div className="list-column">
-            {visibleCustomers.map((customer) => (
-              <article key={customer.id} className="admin-card customer-card">
-                <div className="customer-head">
-                  <div>
-                    <span className="eyebrow">
-                      {customer.previousOrders.length ? "Cliente recorrente" : "Cadastro manual"}
-                    </span>
-                    <h2>{customer.name}</h2>
-                  </div>
-                  <strong>{formatCurrency(customer.totalSpent)}</strong>
-                </div>
-                <div className="summary-list two-columns">
-                  <div><span>Telefone</span><strong>{customer.phone}</strong></div>
-                  <div><span>Bairro</span><strong>{customer.neighborhood}</strong></div>
-                  <div><span>Endereco</span><strong>{customer.address}</strong></div>
-                  <div><span>Pedidos</span><strong>{customer.previousOrders.length}</strong></div>
-                </div>
-              </article>
-            ))}
-            {visibleCustomerCount < customers.length || customers.length >= customerLimit ? (
-              <button type="button" className="button button-outline button-block" onClick={loadMoreCustomers}>
-                Carregar mais clientes
               </button>
             ) : null}
           </div>
