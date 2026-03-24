@@ -11,6 +11,7 @@ import {
   MapPinned,
   MessageCircle,
   Package,
+  Search,
   Wallet,
   RefreshCcw,
   QrCode,
@@ -65,6 +66,7 @@ const defaultProductForm = () => ({
   purchasePrice: "",
   salePrice: "",
   stock: 0,
+  externalProductId: "",
   active: true,
   featured: false,
   badge: "",
@@ -473,6 +475,27 @@ const getStockLevelMeta = (stock, lowThreshold = 5) => {
   };
 };
 
+const normalizeSearchText = (value) =>
+  String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+
+const productMatchesSearch = (product, normalizedQuery) => {
+  if (!normalizedQuery) {
+    return true;
+  }
+
+  return [
+    product.name,
+    product.category,
+    product.volume,
+    product.description,
+    product.externalProductId
+  ].some((entry) => normalizeSearchText(entry).includes(normalizedQuery));
+};
+
 function AdminPage() {
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY) || "");
   const [loginForm, setLoginForm] = useState({ username: "admin", password: "123456" });
@@ -492,6 +515,7 @@ function AdminPage() {
   const [productForm, setProductForm] = useState(defaultProductForm);
   const [promotionForm, setPromotionForm] = useState(defaultPromotionForm);
   const [categoryName, setCategoryName] = useState("");
+  const [productSearch, setProductSearch] = useState("");
   const [expenseForm, setExpenseForm] = useState(defaultExpenseForm);
   const [editingExpenseId, setEditingExpenseId] = useState("");
   const [payableForm, setPayableForm] = useState(defaultPayableForm);
@@ -863,6 +887,10 @@ function AdminPage() {
   }, [products.length]);
 
   useEffect(() => {
+    setVisibleProductCount(DEFAULT_PAGE_SIZE);
+  }, [productSearch]);
+
+  useEffect(() => {
     setVisiblePromotionCount(DEFAULT_PAGE_SIZE);
   }, [promotions.length]);
 
@@ -952,7 +980,17 @@ function AdminPage() {
 
   const loadMoreProducts = async () => {
     const nextVisibleCount = visibleProductCount + DEFAULT_PAGE_SIZE;
-    if (nextVisibleCount <= products.length) {
+    const normalizedQuery = normalizeSearchText(productSearch);
+    const filteredLoadedProductsCount = normalizedQuery
+      ? products.filter((product) => productMatchesSearch(product, normalizedQuery)).length
+      : products.length;
+    const shouldFetchMoreForSearch =
+      Boolean(normalizedQuery) &&
+      nextVisibleCount > filteredLoadedProductsCount &&
+      products.length >= productLimit &&
+      productLimit < 500;
+
+    if (!shouldFetchMoreForSearch && nextVisibleCount <= filteredLoadedProductsCount) {
       setVisibleProductCount(nextVisibleCount);
       return;
     }
@@ -1036,6 +1074,7 @@ function AdminPage() {
     setPromotions([]);
     setAdminProfile(null);
     setAdminConfirmed(false);
+    setProductSearch("");
     setExpenseForm(defaultExpenseForm);
     setEditingExpenseId("");
     setPayableForm(defaultPayableForm);
@@ -1064,10 +1103,14 @@ function AdminPage() {
   };
 
   const productCatalog = products;
+  const normalizedProductSearch = normalizeSearchText(productSearch);
+  const filteredProductCatalog = productCatalog.filter((product) =>
+    productMatchesSearch(product, normalizedProductSearch)
+  );
   const promotionsCatalog = promotions;
   const visibleOrders = orders.slice(0, visibleOrderCount);
   const visibleCustomers = customers.slice(0, visibleCustomerCount);
-  const visibleProducts = productCatalog.slice(0, visibleProductCount);
+  const visibleProducts = filteredProductCatalog.slice(0, visibleProductCount);
   const visiblePromotions = promotionsCatalog.slice(0, visiblePromotionCount);
   const categories = dashboard?.categories?.length
     ? dashboard.categories
@@ -1135,6 +1178,11 @@ function AdminPage() {
     return String(left.name || "").localeCompare(String(right.name || ""), "pt-BR");
   });
   const visibleOperationsStockProducts = operationsStockProducts.slice(0, visibleProductCount);
+  const hasMoreCatalogProducts = productCatalog.length >= productLimit && productLimit < 500;
+  const canLoadMoreFilteredProducts =
+    visibleProductCount < filteredProductCatalog.length || hasMoreCatalogProducts;
+  const productSearchResultsLabel =
+    filteredProductCatalog.length === 1 ? "1 resultado" : `${filteredProductCatalog.length} resultados`;
   const overduePayables = payables.filter((entry) => entry.status !== "paid" && isOverdue(entry.dueDate));
   const dueSoonPayables = payables.filter(
     (entry) => entry.status !== "paid" && !isOverdue(entry.dueDate) && isDueSoon(entry.dueDate)
@@ -2277,6 +2325,19 @@ function AdminPage() {
                 <input value={productForm.volume} onChange={(event) => setProductForm((current) => ({ ...current, volume: event.target.value }))} />
               </label>
               <label>
+                ID estoque ERP/API
+                <input
+                  value={productForm.externalProductId}
+                  placeholder="SKU-123"
+                  onChange={(event) =>
+                    setProductForm((current) => ({
+                      ...current,
+                      externalProductId: event.target.value
+                    }))
+                  }
+                />
+              </label>
+              <label>
                 Estoque
                 <input type="number" value={productForm.stock} onChange={(event) => setProductForm((current) => ({ ...current, stock: Number(event.target.value) }))} />
               </label>
@@ -2327,24 +2388,65 @@ function AdminPage() {
             </button>
           </article>
           <div className="list-column">
-            {visibleProducts.map((product) => (
-              <article key={product.id} className="admin-card product-admin-card">
-                <img src={product.image} alt={product.name} />
+            <article className="admin-card product-search-card">
+              <div className="card-header">
                 <div>
-                  <strong>{product.name}</strong>
-                  <span>{product.category} - {product.volume}</span>
-                  <small>
-                    Venda {formatCurrency(product.salePrice)} - compra {formatCurrency(product.purchasePrice)} - estoque {product.stock}
-                  </small>
+                  <span className="eyebrow">Busca</span>
+                  <h2>Localizar produto</h2>
+                  <p>Pesquise por nome, categoria, volume, descricao ou codigo ERP/API.</p>
                 </div>
-                <div className="card-actions">
-                  <button type="button" className="button button-soft" onClick={() => { setActiveTab("products"); setEditingProductId(product.id); setProductForm(getProductFormState(product)); setMessage(""); }}>Editar</button>
-                  <button type="button" className="button button-outline" onClick={() => runProductsAction(() => api.toggleProduct(token, product.id), product.active ? "Produto pausado." : "Produto ativado.")}>{product.active ? "Pausar" : "Ativar"}</button>
-                  <button type="button" className="button button-muted" onClick={() => runProductsAction(() => api.deleteProduct(token, product.id), "Produto removido.")}>Remover</button>
+                <span className="status-pill">{productSearchResultsLabel}</span>
+              </div>
+              <div className="product-search-toolbar">
+                <div className="pos-search product-search-input">
+                  <Search size={16} />
+                  <input
+                    value={productSearch}
+                    onChange={(event) => setProductSearch(event.target.value)}
+                    placeholder="Buscar produto no catalogo"
+                  />
                 </div>
+                {normalizedProductSearch ? (
+                  <button
+                    type="button"
+                    className="button button-outline"
+                    onClick={() => setProductSearch("")}
+                  >
+                    Limpar busca
+                  </button>
+                ) : null}
+              </div>
+            </article>
+            {visibleProducts.length ? (
+              visibleProducts.map((product) => (
+                <article key={product.id} className="admin-card product-admin-card">
+                  <img src={product.image} alt={product.name} />
+                  <div>
+                    <strong>{product.name}</strong>
+                    <span>{product.category} - {product.volume}</span>
+                    <small>
+                      Venda {formatCurrency(product.salePrice)} - compra {formatCurrency(product.purchasePrice)} - estoque {product.stock}
+                    </small>
+                    <small>{product.externalProductId ? `ERP/API ${product.externalProductId}` : "Sem vinculo de estoque externo"}</small>
+                  </div>
+                  <div className="card-actions">
+                    <button type="button" className="button button-soft" onClick={() => { setActiveTab("products"); setEditingProductId(product.id); setProductForm(getProductFormState(product)); setMessage(""); }}>Editar</button>
+                    <button type="button" className="button button-outline" onClick={() => runProductsAction(() => api.toggleProduct(token, product.id), product.active ? "Produto pausado." : "Produto ativado.")}>{product.active ? "Pausar" : "Ativar"}</button>
+                    <button type="button" className="button button-muted" onClick={() => runProductsAction(() => api.deleteProduct(token, product.id), "Produto removido.")}>Remover</button>
+                  </div>
+                </article>
+              ))
+            ) : (
+              <article className="admin-card empty-state">
+                <h3>{productCatalog.length ? "Nenhum produto encontrado" : "Nenhum produto cadastrado"}</h3>
+                <p>
+                  {productCatalog.length
+                    ? "Tente outro termo ou limpe a busca para ver todo o catalogo."
+                    : "Cadastre o primeiro produto ao lado para comecar a operar o estoque."}
+                </p>
               </article>
-            ))}
-            {visibleProductCount < productCatalog.length || productCatalog.length >= productLimit ? (
+            )}
+            {canLoadMoreFilteredProducts ? (
               <button
                 type="button"
                 className="button button-outline button-block"
@@ -2452,6 +2554,7 @@ function AdminPage() {
                         venda {formatCurrency(product.salePrice)} - estoque {Number(product.stock || 0)} un.
                         {!product.active ? " - produto pausado" : ""}
                       </small>
+                      <small>{product.externalProductId ? `ERP/API ${product.externalProductId}` : "Estoque somente local"}</small>
                     </div>
                   </article>
                 );
@@ -2464,7 +2567,7 @@ function AdminPage() {
               </article>
             )}
 
-            {visibleProductCount < operationsStockProducts.length || productCatalog.length >= productLimit ? (
+            {visibleProductCount < operationsStockProducts.length || hasMoreCatalogProducts ? (
               <button
                 type="button"
                 className="button button-outline button-block"
